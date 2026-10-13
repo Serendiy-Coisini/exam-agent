@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +24,13 @@ class UserProfilePayload(BaseModel):
     education_level: Optional[str] = Field(None, max_length=80)
     degree: Optional[str] = Field(None, max_length=80)
     major: Optional[str] = Field(None, max_length=200)
+    gender: Optional[str] = Field(None, pattern="^(男|女)?$")
+    cet4_score: Optional[int] = Field(None, ge=0, le=710)
+    cet6_score: Optional[int] = Field(None, ge=0, le=710)
+    cet4_passed: Optional[bool] = None
+    cet6_passed: Optional[bool] = None
+    certificates: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(default_factory=list, max_length=100)
+    certificates_reviewed: Optional[bool] = None
     graduation_year: Optional[int] = Field(None, ge=1950, le=2100)
     is_fresh_graduate: Optional[bool] = None
     political_status: Optional[str] = Field(None, max_length=80)

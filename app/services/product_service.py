@@ -5,6 +5,8 @@ from app.schemas.agent_schema import AgentAnalyzeRequest, ChatMessage
 
 
 PROFILE_ALIAS_FIELDS = {
+    "gender", "cet4_score", "cet6_score", "cet4_passed", "cet6_passed",
+    "certificates", "certificates_reviewed",
     "grassroots_years",
     "province",
     "city",

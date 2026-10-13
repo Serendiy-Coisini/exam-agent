@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#f7f8fa">
     <title>Exam Agent · AI 招考决策工作台</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="/static/styles.css?v=20261013-model-settings">
+    <link rel="stylesheet" href="/static/styles.css?v=20261013-eligibility-final">
 </head>
 <body>
     <a class="skip-link" href="#workspaceMain">跳到主要内容</a>
@@ -37,6 +37,9 @@
                 <button class="nav-item" type="button" data-route-target="analyst">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 10h8M8 14h5"/><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 3v-5a2 2 0 0 1-1-1.73V6a2 2 0 0 1 2-2Z"/></svg>
                     <span>招考分析师</span>
+                </button>
+                <button class="nav-item" type="button" data-route-target="eligibility">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M7 12h10M10 19h4"/></svg><span>画像选岗</span>
                 </button>
                 <button class="nav-item" type="button" data-route-target="single-job">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5M8 10.5h5M10.5 8v5"/></svg>
@@ -216,6 +219,7 @@
                             </div>
                             <div class="analyst-session-actions">
                                 <span class="session-pill" id="analystSessionTitle">本地临时对话</span>
+                                <button class="quiet-button" type="button" data-route-target="eligibility">按画像筛选全部岗位</button>
                                 <button class="quiet-button" type="button" data-route-target="model-settings">模型设置</button>
                                 <button class="quiet-button" type="button" data-ui-action="open-cloud-sessions">历史会话</button>
                                 <button id="clearChatButton" class="quiet-button" type="button">新对话</button>
@@ -342,6 +346,45 @@
                                 </div>
                             </form>
                         </div>
+                    </section>
+
+                    <section class="page-view" data-page="eligibility" aria-labelledby="eligibilityTitle" hidden>
+                        <header class="page-header"><div><p class="eyebrow">Profile eligibility</p><h1 id="eligibilityTitle">按画像筛选全部岗位</h1><p>先按基础条件初筛，再根据备注核验性别、英语和证书要求。可以翻页查看全部结果。</p></div><button class="quiet-button" type="button" data-route-target="profile">完善我的画像</button></header>
+                        <section class="surface-card eligibility-profile-card"><div class="section-heading"><h2>当前基础画像</h2><button id="eligibilityUseProfile" class="text-button" type="button">重新读取画像</button></div><p id="eligibilityProfileSummary" class="surface-description"></p></section>
+                        <form id="eligibilityForm" class="profile-form">
+                            <section class="form-section"><div class="form-section-heading"><span>01</span><div><h2>全量初筛范围</h2><p>省市严格限定，不补充其他城市。年份留空使用各省份、各考试最新已导入年份。</p></div></div>
+                                <div class="form-grid">
+                                    <label>省份<select id="eligibilityProvince"></select></label>
+                                    <label>城市<input id="eligibilityCity" type="text" maxlength="80" placeholder="留空为全省；例如南宁"></label>
+                                    <label>考试类型<select id="eligibilityExam"><option value="">全部</option><option value="国考">国考</option><option value="省考">省考</option><option value="事业单位">事业单位</option></select></label>
+                                    <label>年份<input id="eligibilityYear" type="number" min="1900" max="2100" placeholder="最新已导入年份"></label>
+                                    <label class="span-two">单位、岗位名称或代码<input id="eligibilityKeyword" type="search" maxlength="200" placeholder="可留空"></label>
+                                </div>
+                            </section>
+                            <section class="form-section"><div class="form-section-heading"><span>02</span><div><h2>备注复筛</h2><p>以下资格先读取画像，可在本页临时调整；长期保存请到“我的画像”。</p></div></div>
+                                <label class="eligibility-checkbox"><input id="eligibilityRemarks" type="checkbox" checked>启用备注资格核验（关闭后，含备注的岗位保留为待核验）</label>
+                                <div class="form-grid eligibility-qualifications">
+        <label>性别<select id="eligibilityGender"><option value="">未填写</option><option value="男">男</option><option value="女">女</option></select></label>
+        <label>毕业年份<input id="eligibilityGraduationYear" type="number" min="1950" max="2100" placeholder="未填写"></label>
+        <label>英语四级成绩<input id="eligibilityCet4" type="number" min="0" max="710" step="1" placeholder="0–710，留空为未填写"></label>
+        <label>英语六级成绩<input id="eligibilityCet6" type="number" min="0" max="710" step="1" placeholder="0–710，留空为未填写"></label>
+        <label>四级合格证明<select id="eligibilityCet4Passed"><option value="">未填写</option><option value="yes">有通过 / 合格证明</option><option value="no">没有</option></select></label>
+        <label>六级合格证明<select id="eligibilityCet6Passed"><option value="">未填写</option><option value="yes">有通过 / 合格证明</option><option value="no">没有</option></select></label>
+        <label class="span-two">持有的证书（分号或换行分隔）<textarea id="eligibilityCertificates" maxlength="2000" rows="3" placeholder="例如：法律职业资格A类；注册会计师；软考中级"></textarea><small>请填写完整名称及等级。暂不自动推断不同证书或不同等级的替代关系。</small></label>
+    </div>
+    <label class="eligibility-checkbox"><input id="eligibilityCertificatesKnown" type="checkbox">已完整填写证书信息（没有证书可留空并勾选，未列出的视为没有）</label>
+                                <div class="form-grid eligibility-secondary">
+                                    <label>备注必须包含<input id="eligibilityInclude" type="text" maxlength="200" placeholder="例如：英语；多个词用分号分隔，需全部包含"></label>
+                                    <label>备注排除关键词<input id="eligibilityExclude" type="text" maxlength="200" placeholder="例如：夜班；多个词用分号分隔，任一命中即排除"></label>
+                                    <label>显示结果<select id="eligibilityStatus"><option value="candidate">条件匹配 + 待核验</option><option value="matched">只看条件匹配</option><option value="pending">只看待核验</option><option value="unmet">只看明确不符合</option><option value="all">全部（含不符合）</option></select></label>
+                                    <label>每页条数<select id="eligibilityPageSize"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
+                                </div>
+                            </section>
+                            <div class="form-actions"><span>未填信息和复杂条件保留待核验；条件匹配不等于报名资格审查通过。</span><button id="eligibilitySubmit" class="primary-button" type="submit">按画像筛选全部岗位</button></div>
+                        </form>
+                        <section class="surface-card eligibility-results-heading" aria-live="polite"><h2>筛选结果</h2><p id="eligibilitySummary">点击按画像筛选全部岗位。</p><p id="eligibilityCounts"></p></section>
+                        <div class="eligibility-pagination"><button id="eligibilityPrevious" class="quiet-button" type="button" disabled>上一页</button><span id="eligibilityPageInfo">尚未查询</span><button id="eligibilityNext" class="quiet-button" type="button" disabled>下一页</button></div>
+                        <div id="eligibilityResults" class="eligibility-results"></div>
                     </section>
 
                     <section class="page-view" data-page="single-job" aria-labelledby="singleJobTitle" hidden>
@@ -751,6 +794,17 @@
                                 </div>
                             </section>
 
+                            <section class="form-section"><div class="form-section-heading"><span>资格</span><div><h2>备注筛选资格</h2><p>用于全量画像选岗。未填信息会保留待核验，不直接视为不符合。</p></div></div><div class="form-grid eligibility-qualifications">
+        <label>性别<select id="profileGender"><option value="">未填写</option><option value="男">男</option><option value="女">女</option></select></label>
+        <label>毕业年份<input id="profileGraduationYear" type="number" min="1950" max="2100" placeholder="未填写"></label>
+        <label>英语四级成绩<input id="profileCet4" type="number" min="0" max="710" step="1" placeholder="0–710，留空为未填写"></label>
+        <label>英语六级成绩<input id="profileCet6" type="number" min="0" max="710" step="1" placeholder="0–710，留空为未填写"></label>
+        <label>四级合格证明<select id="profileCet4Passed"><option value="">未填写</option><option value="yes">有通过 / 合格证明</option><option value="no">没有</option></select></label>
+        <label>六级合格证明<select id="profileCet6Passed"><option value="">未填写</option><option value="yes">有通过 / 合格证明</option><option value="no">没有</option></select></label>
+        <label class="span-two">持有的证书（分号或换行分隔）<textarea id="profileCertificates" maxlength="2000" rows="3" placeholder="例如：法律职业资格A类；注册会计师；软考中级"></textarea><small>请填写完整名称及等级。暂不自动推断不同证书或不同等级的替代关系。</small></label>
+    </div>
+    <label class="eligibility-checkbox"><input id="profileCertificatesKnown" type="checkbox">已完整填写证书信息（没有证书可留空并勾选，未列出的视为没有）</label></section>
+
                             <section class="form-section">
                                 <div class="form-section-heading">
                                     <span>02</span>
@@ -955,7 +1009,8 @@
     </dialog>
 
     <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <script src="/static/eligibility.js?v=20261013-eligibility-final"></script>
     <script src="/static/model-settings.js?v=20261013-model-settings"></script>
-    <script src="/static/app.js?v=20261013-model-settings"></script>
+    <script src="/static/app.js?v=20261013-eligibility-final"></script>
 </body>
 </html>

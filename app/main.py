@@ -3,6 +3,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.agent import router as agent_router
+from app.api.v1.eligibility import router as eligibility_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.favorites import router as favorites_router
 from app.api.v1.imports import router as imports_router
@@ -23,6 +24,7 @@ app = FastAPI(
 
 
 app.include_router(agent_router, prefix="/api/v1")
+app.include_router(eligibility_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(user_router, prefix="/api/v1")
 app.include_router(sessions_router, prefix="/api/v1")

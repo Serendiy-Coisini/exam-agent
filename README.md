@@ -623,6 +623,7 @@ curl -X POST "http://127.0.0.1:18100/api/v1/imports/upload" \
 * [产品与后端架构](docs/product_backend_architecture.md)
 * [数据导入指南](docs/data_import_guide.md)
 * [模型设置](docs/model-settings.md)
+* [按画像筛选全部岗位与备注复筛](docs/profile-eligibility.md)
 * [Agent 分析逻辑](docs/agent_logic.md)
 * [集成架构](docs/integration_architecture.md)
 * [政策知识库集成边界](docs/integration_with_rag_builder.md)
@@ -664,7 +665,8 @@ curl -X POST "http://127.0.0.1:18100/api/v1/imports/upload" \
 python -m unittest discover -s tests -v
 node --check app/static/app.js
 node --check app/static/model-settings.js
-node --test tests/frontend.test.cjs tests/model-settings.test.cjs
+node --check app/static/eligibility.js
+node --test tests/frontend.test.cjs tests/model-settings.test.cjs tests/eligibility.test.cjs
 ```
 
 测试使用临时数据库和虚构资料，不读取正式业务数据，也不调用外部模型。GitHub Actions 对推送和 Pull Request 自动执行上述检查。
@@ -672,3 +674,5 @@ node --test tests/frontend.test.cjs tests/model-settings.test.cjs
 首次画像填写不再要求先导入职位表；目标城市可直接输入。推荐年份留空时使用各省份/考试最新已导入年份，也可指定历史年份。学位、政治面貌及基层年限可在画像填写；未知或复杂资格要求明确列为待核验。
 
 启用 `AUTH_ENABLED=true` 后，导入和 Agent 接口需要登录。导入数据属于登录用户共享的工作区；当前版本未实现租户级数据隔离。开发登录默认关闭，正式认证模式始终禁止开发登录。
+
+画像选岗可扫描全部已入库岗位并分页，按省市、年份及画像初筛，再核验备注中的性别、四/六级成绩和常见证书要求。结果区分条件匹配、待核验和明确不符合，保留原始备注与判断依据；未知或复杂条件不会自动判成可报。详见 [画像选岗说明](docs/profile-eligibility.md)。

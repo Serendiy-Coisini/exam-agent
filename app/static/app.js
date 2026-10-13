@@ -23,7 +23,7 @@ const ANALYSIS_HISTORY_LIMIT = 200;
 const ANALYSIS_DISCLAIMER_TEXT = "数据来源与 AI 分析仅供参考，岗位资格、分数线、招录条件以官方公告、职位表和招录单位解释为准。AI 可能存在理解偏差，请在报名前自行核对原始公告。";
 const PROFILE_UNSET_OPTION = "未填写";
 const PROFILE_CORE_FIELDS = ["province", "exam_type", "education", "major", "identity"];
-const PROFILE_TRACKED_FIELDS = [...PROFILE_CORE_FIELDS, "city", "accept_relocation", "degree", "political_status", "grassroots_years"];
+const PROFILE_TRACKED_FIELDS = [...PROFILE_CORE_FIELDS, "city", "accept_relocation", "degree", "political_status", "grassroots_years", "gender", "graduation_year", "cet4_score", "cet6_score", "cet4_passed", "cet6_passed", "certificates", "certificates_reviewed"];
 const PROFILE_FIELD_LABELS = {
     province: "省份",
     exam_type: "考试类型",
@@ -32,11 +32,14 @@ const PROFILE_FIELD_LABELS = {
     major: "专业",
     identity: "身份",
     city: "城市",
+    gender: "性别", graduation_year: "毕业年份", cet4_score: "四级成绩", cet6_score: "六级成绩",
+    cet4_passed: "四级证明", cet6_passed: "六级证明", certificates: "证书", certificates_reviewed: "证书填写状态",
     accept_relocation: "异地意愿"
 };
 
 const ROUTE_TITLES = {
     overview: "概览",
+    eligibility: "画像选岗",
     analyst: "招考分析师",
     "single-job": "单岗位查询",
     shortlist: "岗位备选",
@@ -1218,6 +1221,10 @@ function applyServerProfile(profile) {
         degree: profile.degree || "",
         political_status: profile.political_status || "",
         grassroots_years: profile.grassroots_years ?? "",
+        gender: profile.gender || "", graduation_year: profile.graduation_year ?? null,
+        cet4_score: profile.cet4_score ?? null, cet6_score: profile.cet6_score ?? null,
+        cet4_passed: profile.cet4_passed ?? null, cet6_passed: profile.cet6_passed ?? null,
+        certificates: normalizeArray(profile.certificates), certificates_reviewed: profile.certificates_reviewed ?? null,
         education: profile.education || profile.education_level || "",
         major: profile.major || "",
         identity: profile.identity || (profile.is_fresh_graduate ? "应届生" : ""),
@@ -1610,6 +1617,8 @@ function renderRoute(route, options = {}) {
         ensureScoreResultsLoaded();
     } else if (currentRoute === "history") {
         renderAnalysisHistory();
+    } else if (currentRoute === "eligibility") {
+        initializeEligibilityPage();
     } else if (currentRoute === "model-settings") {
         loadModelSettings();
     } else if (currentRoute === "analyst") {
@@ -2034,6 +2043,7 @@ function isValidCatalogYear(value) {
 }
 
 function renderProfileForm() {
+    renderEligibilityProfileFields("profile", userProfile);
     setValue("profileExamType", userProfile.exam_type || "");
     setValue("profileCity", userProfile.city || "");
     setValue("profileDegree", userProfile.degree || "");
@@ -2052,6 +2062,7 @@ function normalizeUserProfile(profile) {
         ...(profile && typeof profile === "object" ? profile : {})
     };
     normalized.preferences = normalizeArray(normalized.preferences);
+    normalized.certificates = normalizeArray(normalized.certificates);
     const storedFilledFields = normalizeArray(normalized.filled_fields)
         .filter((field) => PROFILE_TRACKED_FIELDS.includes(field));
     normalized.filled_fields = storedFilledFields.length > 0
@@ -2084,6 +2095,7 @@ async function handleProfileSubmit(event) {
     const form = event.currentTarget;
     const submitButton = form.querySelector('button[type="submit"]');
     userProfile = {
+        ...readEligibilityProfileFields("profile"),
         exam_type: readProfileFormValue("profileExamType"),
         province: readProfileFormValue("profileProvince"),
         city: readProfileFormValue("profileCity"),
@@ -2118,6 +2130,7 @@ async function handleProfileSubmit(event) {
         const data = await apiFetch(USER_PROFILE_API_URL, {
             method: "PUT",
             body: JSON.stringify({
+                ...readEligibilityProfileFields("profile"),
                 degree: userProfile.degree,
                 political_status: userProfile.political_status,
                 grassroots_years: userProfile.grassroots_years === "" ? null : Number(userProfile.grassroots_years),
