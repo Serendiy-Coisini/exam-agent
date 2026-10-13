@@ -45,7 +45,8 @@ const ROUTE_TITLES = {
     history: "分析记录",
     "data-center": "数据中心",
     "data-import": "数据导入",
-    profile: "我的画像"
+    profile: "我的画像",
+    "model-settings": "模型设置"
 };
 
 const IMPORT_FIELD_LABELS = {
@@ -1576,6 +1577,7 @@ function renderRoute(route, options = {}) {
         console.warn(`未找到页面：${requestedRoute}`);
         return;
     }
+    if (requestedRoute !== "model-settings") resetModelSettingsSecrets();
     currentRoute = requestedRoute;
     document.querySelectorAll("[data-page]").forEach((page) => {
         const active = page.dataset.page === currentRoute;
@@ -1608,6 +1610,8 @@ function renderRoute(route, options = {}) {
         ensureScoreResultsLoaded();
     } else if (currentRoute === "history") {
         renderAnalysisHistory();
+    } else if (currentRoute === "model-settings") {
+        loadModelSettings();
     } else if (currentRoute === "analyst") {
         syncAnalystSubmitState();
     }

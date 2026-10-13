@@ -6059,3 +6059,27 @@ body.context-collapsed #contextPanelToggle svg {
     background: #d97706;
     box-shadow: 0 0 0 4px rgba(217, 119, 6, 0.12);
 }
+
+
+/* Local model connection settings */
+.model-settings-form { max-width: 820px; }
+.model-settings-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.model-settings-form .form-grid small {
+    color: var(--text-muted); font-size: 12px; font-weight: 400; line-height: 1.7;
+    overflow-wrap: anywhere;
+}
+.model-key-clear { display: flex; align-items: center; gap: 8px; margin-top: 20px; font-size: 13px; }
+.model-key-clear input { width: 16px; height: 16px; accent-color: var(--primary); }
+.model-settings-feedback { padding: 0 26px 20px; color: var(--text-muted); font-size: 12px; line-height: 1.8; }
+.model-settings-feedback p { margin: 8px 0 0; overflow-wrap: anywhere; }
+#modelSettingsResult { padding: 10px 12px; border-radius: 8px; background: var(--surface-soft); color: var(--text); }
+#modelSettingsResult[data-kind="error"] { color: #a33131; background: #fff1f1; }
+#modelSettingsResult[data-kind="success"] { color: #216d4a; background: #edf8f1; }
+.model-settings-actions > div { display: flex; flex-wrap: wrap; gap: 10px; }
+.model-settings-form button:disabled { opacity: 0.55; cursor: not-allowed; }
+@media (max-width: 640px) {
+    .model-settings-fields .form-section { padding: 20px 16px; }
+    .model-settings-feedback { padding: 0 16px 16px; }
+    .model-settings-actions { align-items: stretch; flex-direction: column; padding: 16px; gap: 12px; }
+    .model-settings-actions > div { display: grid; grid-template-columns: 1fr 1fr; }
+}

@@ -509,6 +509,8 @@ http://127.0.0.1:18100/docs
 | `RAG_ENABLED`    | 是否启用外部政策检索               | 可选                          |
 | `RAG_BASE_URL`   | 外部政策服务地址                 | 可选                          |
 
+也可以直接打开工作台侧边栏的 **模型设置**，填写接口基础地址、模型名称和 API Key，测试连接后保存，立即生效且重启后保留。详见 [模型设置说明](docs/model-settings.md)。界面保存的配置优先于 `.env`，密钥仅保存在本机 `data/model_settings.json`，不回显、不进入 Git。
+
 未配置 LLM 时，系统仍可通过规则兜底完成部分岗位筛选与结构化分析。
 
 ---
@@ -620,6 +622,7 @@ curl -X POST "http://127.0.0.1:18100/api/v1/imports/upload" \
 * [项目概览](docs/project_overview.md)
 * [产品与后端架构](docs/product_backend_architecture.md)
 * [数据导入指南](docs/data_import_guide.md)
+* [模型设置](docs/model-settings.md)
 * [Agent 分析逻辑](docs/agent_logic.md)
 * [集成架构](docs/integration_architecture.md)
 * [政策知识库集成边界](docs/integration_with_rag_builder.md)
@@ -660,7 +663,8 @@ curl -X POST "http://127.0.0.1:18100/api/v1/imports/upload" \
 ```bash
 python -m unittest discover -s tests -v
 node --check app/static/app.js
-node --test tests/frontend.test.cjs
+node --check app/static/model-settings.js
+node --test tests/frontend.test.cjs tests/model-settings.test.cjs
 ```
 
 测试使用临时数据库和虚构资料，不读取正式业务数据，也不调用外部模型。GitHub Actions 对推送和 Pull Request 自动执行上述检查。

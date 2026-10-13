@@ -6,6 +6,8 @@ from app.api.v1.agent import router as agent_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.favorites import router as favorites_router
 from app.api.v1.imports import router as imports_router
+from app.api.v1.model_settings import router as model_settings_router
+from app.services.model_settings_service import load_model_settings
 from app.api.v1.reports import router as reports_router
 from app.api.v1.runs import router as runs_router
 from app.api.v1.sessions import router as sessions_router
@@ -28,12 +30,14 @@ app.include_router(favorites_router, prefix="/api/v1")
 app.include_router(reports_router, prefix="/api/v1")
 app.include_router(runs_router, prefix="/api/v1")
 app.include_router(imports_router, prefix="/api/v1")
+app.include_router(model_settings_router, prefix="/api/v1")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 @app.on_event("startup")
 def startup() -> None:
     initialize_database()
+    load_model_settings()
 
 
 @app.get("/")

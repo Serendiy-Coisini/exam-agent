@@ -16,14 +16,16 @@ def inference_budget(seconds):
 
 
 from app.core.config import settings
+from app.services.model_settings_service import get_model_configuration
 
 
 def generate_llm_json(prompt: str, fallback_data: dict) -> dict:
     """Ask the configured chat model for one JSON object."""
+    config = get_model_configuration()
     fallback = dict(fallback_data or {})
-    if not settings.LLM_API_KEY or not settings.LLM_MODEL_NAME:
+    if not config.api_key or not config.model_name:
         fallback["llm_used"] = False
-        fallback["model"] = settings.LLM_MODEL_NAME or ""
+        fallback["model"] = config.model_name or ""
         fallback["error"] = "LLM is not configured."
         return fallback
 
@@ -31,14 +33,14 @@ def generate_llm_json(prompt: str, fallback_data: dict) -> dict:
         from openai import OpenAI
     except ImportError:
         fallback["llm_used"] = False
-        fallback["model"] = settings.LLM_MODEL_NAME or ""
+        fallback["model"] = config.model_name or ""
         fallback["error"] = "OpenAI SDK is not installed."
         return fallback
 
     try:
-        client = _build_client(OpenAI)
+        client = _build_client(OpenAI, config)
         response = client.chat.completions.create(
-            model=settings.LLM_MODEL_NAME,
+            model=config.model_name,
             messages=[
                 {
                     "role": "system",
@@ -54,18 +56,18 @@ def generate_llm_json(prompt: str, fallback_data: dict) -> dict:
         data = _parse_json_object(response.choices[0].message.content or "")
     except Exception:
         fallback["llm_used"] = False
-        fallback["model"] = settings.LLM_MODEL_NAME or ""
+        fallback["model"] = config.model_name or ""
         fallback["error"] = "LLM JSON planning failed."
         return fallback
 
     if not data:
         fallback["llm_used"] = False
-        fallback["model"] = settings.LLM_MODEL_NAME or ""
+        fallback["model"] = config.model_name or ""
         fallback["error"] = "LLM JSON planning returned invalid content."
         return fallback
 
     data["llm_used"] = True
-    data["model"] = settings.LLM_MODEL_NAME or ""
+    data["model"] = config.model_name or ""
     data.setdefault("error", "")
     return data
 
@@ -77,15 +79,18 @@ def generate_llm_chat(
     temperature: float = 0.45,
 ) -> dict:
     """Generate a natural answer with recent conversation context."""
-    if not settings.LLM_API_KEY:
+    config = get_model_configuration()
+    if not config.api_key:
         return _fallback_result(
             fallback_report=fallback_report,
+            model_name=config.model_name,
             error="LLM_API_KEY is not configured; returned fallback answer.",
         )
 
-    if not settings.LLM_MODEL_NAME:
+    if not config.model_name:
         return _fallback_result(
             fallback_report=fallback_report,
+            model_name=config.model_name,
             error="LLM_MODEL_NAME is not configured; returned fallback answer.",
         )
 
@@ -94,13 +99,14 @@ def generate_llm_chat(
     except ImportError:
         return _fallback_result(
             fallback_report=fallback_report,
+            model_name=config.model_name,
             error="OpenAI Python SDK is not installed; returned fallback answer.",
         )
 
     try:
-        client = _build_client(OpenAI)
+        client = _build_client(OpenAI, config)
         response = client.chat.completions.create(
-            model=settings.LLM_MODEL_NAME,
+            model=config.model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 *_normalize_chat_messages(messages),
@@ -111,12 +117,14 @@ def generate_llm_chat(
     except Exception:
         return _fallback_result(
             fallback_report=fallback_report,
+            model_name=config.model_name,
             error="LLM chat call failed; returned fallback answer.",
         )
 
     if not content:
         return _fallback_result(
             fallback_report=fallback_report,
+            model_name=config.model_name,
             error="LLM chat returned empty content; returned fallback answer.",
         )
 
@@ -124,7 +132,7 @@ def generate_llm_chat(
         "summary": content,
         "analysis_report": content,
         "llm_used": True,
-        "model": settings.LLM_MODEL_NAME or "",
+        "model": config.model_name or "",
         "error": "",
     }
 
@@ -143,17 +151,18 @@ def generate_llm_summary(prompt: str, fallback_report: str) -> dict:
     )
 
 
-def _build_client(openai_class):
+def _build_client(openai_class, config=None):
     """Create an OpenAI-compatible SDK client."""
+    config = config or get_model_configuration()
     timeout = settings.LLM_TIMEOUT_SECONDS
     deadline = _ANALYSIS_DEADLINE.get()
     if deadline is not None:
         timeout = min(timeout, deadline - time.monotonic())
         if timeout <= 0:
             raise TimeoutError("Analysis model budget exhausted")
-    client_kwargs = {"api_key": settings.LLM_API_KEY, "timeout": timeout, "max_retries": 0}
-    if settings.LLM_BASE_URL:
-        client_kwargs["base_url"] = settings.LLM_BASE_URL
+    client_kwargs = {"api_key": config.api_key, "timeout": timeout, "max_retries": 0}
+    if config.base_url:
+        client_kwargs["base_url"] = config.base_url
     return openai_class(**client_kwargs)
 
 
@@ -190,7 +199,7 @@ def _normalize_chat_messages(messages: list[dict]) -> list[dict]:
     return normalized
 
 
-def _fallback_result(fallback_report: str, error: str) -> dict:
+def _fallback_result(fallback_report: str, error: str, model_name: str | None = None) -> dict:
     safe_report = (fallback_report or "").strip()
     if not safe_report:
         safe_report = "暂时无法生成有效回答，请稍后再试。"
@@ -199,6 +208,6 @@ def _fallback_result(fallback_report: str, error: str) -> dict:
         "summary": safe_report,
         "analysis_report": safe_report,
         "llm_used": False,
-        "model": settings.LLM_MODEL_NAME or "",
+        "model": settings.LLM_MODEL_NAME if model_name is None else model_name,
         "error": error,
     }
