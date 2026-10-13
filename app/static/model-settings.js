@@ -1,7 +1,19 @@
+const MODEL_PRESETS = Object.freeze({
+    deepseek: {label: "DeepSeek", base_url: "https://api.deepseek.com", model_name: "deepseek-flash"},
+    qwen: {label: "通义千问", base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model_name: "qwen-plus"},
+    glm: {label: "智谱 GLM", base_url: "https://open.bigmodel.cn/api/paas/v4", model_name: "glm-4.7"},
+    kimi: {label: "Kimi", base_url: "https://api.moonshot.cn/v1", model_name: "kimi-k2.6"},
+    siliconflow: {label: "硅基流动", base_url: "https://api.siliconflow.cn/v1", model_name: "Qwen/Qwen3-32B"},
+});
+
 let modelSettingsBusy = false;
 let modelSettingsLoaded = false;
 
 document.addEventListener("DOMContentLoaded", () => {
+    document.querySelectorAll("[data-model-preset]").forEach(button => {
+        button.addEventListener("click", () => applyModelPreset(button.dataset.modelPreset));
+    });
+
     document.getElementById("modelSettingsForm")?.addEventListener("submit", handleModelSettingsSave);
     document.getElementById("modelTestButton")?.addEventListener("click", handleModelSettingsTest);
     document.getElementById("modelReloadButton")?.addEventListener("click", loadModelSettings);
@@ -33,9 +45,26 @@ function resetModelSettingsSecrets() {
     if (clear) clear.checked = false;
 }
 
+function applyModelPreset(id) {
+    const preset = Object.hasOwn(MODEL_PRESETS, id) ? MODEL_PRESETS[id] : null;
+    if (!preset || modelSettingsBusy || !modelSettingsLoaded) return;
+    const previous = document.getElementById("modelBaseUrl").value.trim().replace(/\/+$/, "");
+    const endpointChanged = previous !== preset.base_url;
+    document.getElementById("modelBaseUrl").value = preset.base_url;
+    document.getElementById("modelName").value = preset.model_name;
+    if (endpointChanged) {
+        resetModelSettingsSecrets();
+        document.getElementById("modelApiKey").placeholder = "请填写该服务商的 API Key";
+    }
+    showModelSettingsResult(`已填入 ${preset.label} 配置。${endpointChanged ? "已清空输入框中的密钥，请填写该服务商的 API Key。" : ""}保存后生效；可继续手动修改模型名称。`);
+}
+
 function renderModelSettings(data) {
-    document.getElementById("modelBaseUrl").value = data.base_url || "";
-    document.getElementById("modelName").value = data.model_name || "";
+    const emptyLegacy = !data.model_name && !data.api_key_set
+        && (!data.base_url || data.base_url.replace(/\/+$/, "") === "https://api.openai.com/v1");
+    const display = emptyLegacy ? MODEL_PRESETS.deepseek : data;
+    document.getElementById("modelBaseUrl").value = display.base_url || "";
+    document.getElementById("modelName").value = display.model_name || "";
     resetModelSettingsSecrets();
     document.getElementById("modelApiKey").placeholder = data.api_key_set
         ? "已保存，留空保留；填写新密钥可替换" : "填写服务商提供的 API Key";

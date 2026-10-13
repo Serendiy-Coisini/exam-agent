@@ -704,9 +704,17 @@
                                         <span aria-hidden="true">AI</span>
                                         <div><h2>连接配置</h2><p id="modelSettingsStatus" role="status">正在读取模型配置…</p></div>
                                     </div>
+                                    <p id="modelPresetHint">快捷填入地址与模型名称，填写对应服务商的 API Key 后测试并保存。已有配置不会自动覆盖。</p>
+                                    <div class="model-preset-buttons" role="group" aria-label="快捷填入模型配置" aria-describedby="modelPresetHint">
+                                        <button class="quiet-button" type="button" data-model-preset="deepseek">DeepSeek（默认）</button>
+                                        <button class="quiet-button" type="button" data-model-preset="qwen">通义千问</button>
+                                        <button class="quiet-button" type="button" data-model-preset="glm">智谱 GLM</button>
+                                        <button class="quiet-button" type="button" data-model-preset="kimi">Kimi</button>
+                                        <button class="quiet-button" type="button" data-model-preset="siliconflow">硅基流动</button>
+                                    </div>
                                     <div class="form-grid">
                                         <label class="span-two" for="modelBaseUrl">接口基础地址（Base URL）
-                                            <input id="modelBaseUrl" name="base_url" type="url" required maxlength="2048" spellcheck="false" placeholder="https://api.example.com/v1" aria-describedby="modelBaseUrlHint">
+                                            <input id="modelBaseUrl" name="base_url" type="url" required maxlength="2048" spellcheck="false" placeholder="https://api.deepseek.com" aria-describedby="modelBaseUrlHint">
                                             <small id="modelBaseUrlHint">支持 OpenAI 兼容的 Chat Completions 接口。填写服务商提供的基础地址，不含 /chat/completions。</small>
                                         </label>
                                         <label class="span-two" for="modelName">模型名称
@@ -1010,7 +1018,7 @@
 
     <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
     <script src="/static/eligibility.js?v=20261013-eligibility-final"></script>
-    <script src="/static/model-settings.js?v=20261013-model-settings"></script>
+    <script src="/static/model-settings.js?v=20261014-presets"></script>
     <script src="/static/app.js?v=20261013-eligibility-final"></script>
 </body>
 </html>

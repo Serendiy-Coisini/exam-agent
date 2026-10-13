@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.config import settings
+from app.services.model_provider_options import model_request_options
 from app.schemas.model_settings_schema import ModelSettingsPayload
 
 MODEL_SETTINGS_FILE = Path(__file__).resolve().parents[2] / "data" / "model_settings.json"
@@ -103,6 +104,7 @@ def test_model_connection(payload: ModelSettingsPayload) -> dict:
             response = client.chat.completions.create(
                 model=config.model_name, messages=[{"role": "user", "content": "请只回复 OK。"}],
                 max_tokens=16,
+                **model_request_options(config, connection_test=True),
             )
         if not response.choices or not (response.choices[0].message.content or "").strip():
             return {"ok": False, "message": "接口返回内容为空，请检查模型是否支持 Chat Completions。"}

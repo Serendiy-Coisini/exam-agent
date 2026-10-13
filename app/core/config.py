@@ -48,9 +48,9 @@ class Settings:
         self.RAG_TIMEOUT_SECONDS = _env_float("RAG_TIMEOUT_SECONDS", 20.0, 0.1)
         self.RAG_TOP_K = _env_int("RAG_TOP_K", 5, 1, 20)
         self.RAG_BUILDER_BASE_URL = self.RAG_BASE_URL
-        self.LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
+        self.LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
         self.LLM_API_KEY = os.getenv("LLM_API_KEY", "")
-        self.LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "")
+        self.LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "deepseek-flash")
         self.LLM_TIMEOUT_SECONDS = min(120.0, _env_float("LLM_TIMEOUT_SECONDS", 30.0, 0.1))
         self.LLM_ANALYSIS_BUDGET_SECONDS = min(300.0, _env_float("LLM_ANALYSIS_BUDGET_SECONDS", 90.0, 0.1))
         self.DATABASE_URL = os.getenv(

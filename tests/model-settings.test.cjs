@@ -12,7 +12,7 @@ function setup(apiFetch) {
     const elements = Object.fromEntries(ids.map(id => [id, { value: '', checked: false,
         disabled: false, hidden: false, textContent: '', placeholder: '', dataset: {},
         reportValidity: () => true, addEventListener: () => {} }]));
-    const c = vm.createContext({ document: {getElementById: id => elements[id], addEventListener: () => {}},
+    const c = vm.createContext({ document: {getElementById: id => elements[id], addEventListener: () => {}, querySelectorAll: () => []},
         apiFetch, getErrorText: String });
     vm.runInContext(fs.readFileSync(path, 'utf8'), c);
     return { c, elements };
@@ -69,4 +69,55 @@ test('key clear is explicit and a failed load keeps save disabled', async () => 
     c.handleModelKeyClearChange();
     assert.equal(e.modelApiKey.value,'');
     assert.equal(e.modelApiKey.disabled,true);
+});
+
+
+test('empty legacy configuration initially fills DeepSeek without saving', async () => {
+    const calls=[];
+    const {c,elements:e} = setup(async (...args) => {
+        calls.push(args);
+        return {base_url:'https://api.openai.com/v1',model_name:'',api_key_set:false,configured:false};
+    });
+    await c.loadModelSettings();
+    assert.equal(e.modelBaseUrl.value,'https://api.deepseek.com');
+    assert.equal(e.modelName.value,'deepseek-flash');
+    assert.equal(calls.length,1);
+    assert.equal(e.modelApiKey.value,'');
+});
+
+test('provider presets fill address and model but never save or carry draft secrets', async () => {
+    let calls=0;
+    const {c,elements:e} = setup(async () => {
+        calls++;
+        return {base_url:'https://api.deepseek.com',model_name:'deepseek-flash',api_key_set:true,configured:true};
+    });
+    await c.loadModelSettings();
+    e.modelApiKey.value='fiction-draft-key';
+    c.applyModelPreset('qwen');
+    assert.equal(e.modelBaseUrl.value,'https://dashscope.aliyuncs.com/compatible-mode/v1');
+    assert.equal(e.modelName.value,'qwen-plus');
+    assert.equal(e.modelApiKey.value,'');
+    assert.equal(e.modelClearKey.checked,false);
+    assert.match(e.modelSettingsResult.textContent,/密钥/);
+    assert.equal(calls,1);
+    for (const id of ['deepseek','glm','kimi','siliconflow']) {
+        c.applyModelPreset(id);
+        assert.ok(e.modelBaseUrl.value.startsWith('https://'));
+        assert.ok(e.modelName.value);
+    }
+    assert.equal(calls,1);
+});
+
+test('same endpoint preset retains draft key and failed-load presets do nothing', async () => {
+    const {c,elements:e} = setup(async () => ({base_url:'https://api.deepseek.com',model_name:'custom-model',api_key_set:false}));
+    await c.loadModelSettings();
+    e.modelApiKey.value='fiction-draft-key';
+    c.applyModelPreset('deepseek');
+    assert.equal(e.modelApiKey.value,'fiction-draft-key');
+    c.applyModelPreset('unknown-preset');
+    assert.equal(e.modelName.value,'deepseek-flash');
+    const failed = setup(async () => {throw new Error('读取失败');});
+    await failed.c.loadModelSettings();
+    failed.c.applyModelPreset('deepseek');
+    assert.equal(failed.elements.modelBaseUrl.value,'');
 });

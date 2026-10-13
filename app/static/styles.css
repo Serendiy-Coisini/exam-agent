@@ -6111,3 +6111,5 @@ body.context-collapsed #contextPanelToggle svg {
 .eligibility-results-heading p { line-height: 1.8; overflow-wrap: anywhere; }
 
 .eligibility-pagination { position: sticky; top: 8px; z-index: 5; padding: 12px; margin: 16px 0; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+
+.model-preset-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; }

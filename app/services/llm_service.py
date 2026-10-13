@@ -16,6 +16,7 @@ def inference_budget(seconds):
 
 
 from app.core.config import settings
+from app.services.model_provider_options import model_request_options
 from app.services.model_settings_service import get_model_configuration
 
 
@@ -51,7 +52,7 @@ def generate_llm_json(prompt: str, fallback_data: dict) -> dict:
                 },
                 {"role": "user", "content": prompt},
             ],
-            temperature=0,
+            **model_request_options(config, temperature=0),
         )
         data = _parse_json_object(response.choices[0].message.content or "")
     except Exception:
@@ -111,7 +112,7 @@ def generate_llm_chat(
                 {"role": "system", "content": system_prompt},
                 *_normalize_chat_messages(messages),
             ],
-            temperature=temperature,
+            **model_request_options(config, temperature=temperature),
         )
         content = (response.choices[0].message.content or "").strip()
     except Exception:

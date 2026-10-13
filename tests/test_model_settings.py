@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from app.core.config import settings
+from app.core.config import settings, Settings
 from app.services import model_settings_service as service
 from app.services import llm_service
 from app.schemas.model_settings_schema import ModelSettingsPayload
@@ -24,6 +24,42 @@ class ModelSettingsTests(unittest.TestCase):
                   patch.object(settings, "LLM_BASE_URL", "https://model.example/v1")]:
             p.start()
             self.patches.append(p)
+
+    def test_fresh_defaults_use_deepseek_without_enabling_paid_calls(self):
+        with patch.dict('os.environ', {}, clear=True):
+            fresh = Settings()
+        self.assertEqual(fresh.LLM_BASE_URL, 'https://api.deepseek.com')
+        self.assertEqual(fresh.LLM_MODEL_NAME, 'deepseek-flash')
+        self.assertEqual(fresh.LLM_API_KEY, '')
+
+    def test_provider_test_parameters_disable_thinking_for_a_short_probe(self):
+        fake = MagicMock()
+        fake.__enter__.return_value = fake
+        fake.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='OK'))])
+        for base, model, body in [
+            ('https://api.deepseek.com', 'deepseek-flash', {'thinking': {'type': 'disabled'}}),
+            ('https://api.moonshot.cn/v1', 'kimi-k2.6', {'thinking': {'type': 'disabled'}}),
+            ('https://open.bigmodel.cn/api/paas/v4', 'glm-4.7', {'thinking': {'type': 'disabled'}}),
+            ('https://dashscope.aliyuncs.com/compatible-mode/v1', 'qwen-plus', {'enable_thinking': False}),
+            ('https://api.siliconflow.cn/v1', 'Qwen/Qwen3-32B', {'enable_thinking': False}),
+        ]:
+            with self.subTest(model=model), patch('openai.OpenAI', return_value=fake):
+                service.test_model_connection(ModelSettingsPayload(**self.payload(base_url=base, model_name=model)))
+                self.assertEqual(fake.chat.completions.create.call_args.kwargs.get('extra_body'), body)
+
+    def test_kimi_analysis_omits_unsupported_temperature(self):
+        fake = MagicMock()
+        fake.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"intent":"chat"}'))])
+        settings.LLM_BASE_URL = 'https://api.moonshot.cn/v1'
+        settings.LLM_MODEL_NAME = 'kimi-k2.6'
+        settings.LLM_API_KEY = 'fiction-key'
+        with patch('openai.OpenAI', return_value=fake):
+            llm_service.generate_llm_json('fiction prompt', {})
+            self.assertNotIn('temperature', fake.chat.completions.create.call_args.kwargs)
+            llm_service.generate_llm_chat('fiction system', [], 'fallback')
+            self.assertNotIn('temperature', fake.chat.completions.create.call_args.kwargs)
 
     def payload(self, **values):
         return {"base_url": "https://model.example/v1", "model_name": "fiction-model",
