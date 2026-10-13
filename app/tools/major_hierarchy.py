@@ -200,38 +200,49 @@ def _split_terms(value):
 
 
 def _match_major_path(level, code, entry, index, trace):
-    """Use catalog parents for every recognized term, never guessed prefixes."""
-    if level == 'discipline':
-        wanted = dict(discipline_code=code, discipline_name=index['disciplines'][code])
-    elif level == 'category':
-        name, parent = index['categories'][code]
-        wanted = dict(discipline_code=parent, discipline_name=index['disciplines'][parent],
-                      category_code=code, category_name=name)
-    else:
-        wanted = index['codes'][code]
-    steps = []
-    for label, key, name_key in [('门类', 'discipline_code', 'discipline_name'),
-                                  ('专业类', 'category_code', 'category_name'),
-                                  ('具体专业', 'code', 'name')]:
-        if not wanted.get(key):
+    """Match an applicant's specialty, then its category and discipline."""
+    lineage = [('specialty', '具体专业', entry['code'], entry['name']),
+               ('category', '专业类', entry['category_code'], entry['category_name']),
+               ('discipline', '门类', entry['discipline_code'], entry['discipline_name'])]
+    for candidate_level, label, candidate_code, name in lineage:
+        if not candidate_code or candidate_level != level:
             continue
-        matched = entry.get(key) == wanted[key]
-        steps.append(f"{label}{'匹配' if matched else '不符合'}：{wanted[name_key]}（{wanted[key]}）")
-        if not matched:
-            trace.append(' → '.join(steps))
-            return False
-    trace.append(' → '.join(steps))
-    return True
+        matched = candidate_code == code
+        if level == 'specialty':
+            wanted_name = index['codes'][code]['name']
+        elif level == 'category':
+            wanted_name = index['categories'][code][0]
+        else:
+            wanted_name = index['disciplines'][code]
+        trace.append(f"{label}{'匹配' if matched else '不符合'}：岗位要求{wanted_name}（{code}），画像{name}（{candidate_code}）")
+        return matched
+    return False
+
+
+def _major_priority(part):
+    priority = {'specialty': 0, 'category': 1, 'discipline': 2, 'unrestricted': 3}
+    return min(priority[level] for level in part[1])
 
 
 def _any_major_match(parsed, entry):
-    decisions = [part[0](entry) for part in parsed]
-    if True in decisions:
-        return True
-    return None if None in decisions else False
+    unknown = False
+    for part in sorted(parsed, key=_major_priority):
+        decision = part[0](entry)
+        if decision is True:
+            return True
+        unknown |= decision is None
+    return None if unknown else False
 
 
 def _intersect_major_match(outer, inner, entry, exclusion=False, trace=None):
+    if not exclusion:
+        unknown = False
+        for part in sorted((outer, inner), key=_major_priority):
+            decision = part[0](entry)
+            if decision is False:
+                return False
+            unknown |= decision is None
+        return None if unknown else True
     left = outer[0](entry)
     if left is False:
         return False
@@ -330,8 +341,8 @@ def check_major(job, profile, catalog=None):
         if actual and actual not in {entry[key], entry[name_key], entry[key] + entry[name_key]}:
             return result('pending', '手填画像专业层级与权威目录记录不一致', level)
     matched = parsed[0](entry)
-    path = ' → '.join(filter(None, (entry['discipline_name'], entry['category_name'],
-                                    f"{entry['name']}（{entry['code']}）")))
+    path = ' → '.join(filter(None, (f"{entry['name']}（{entry['code']}）", entry['category_name'],
+                                    entry['discipline_name'])))
     reason = f"画像专业路径：{path}；逐级核验：" + '；'.join(trace)
     if matched is None:
         return result('pending', reason + '；括号内专业或附加限制仍须核验', level)

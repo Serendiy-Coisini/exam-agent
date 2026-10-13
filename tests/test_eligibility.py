@@ -46,6 +46,27 @@ class EligibilityTests(unittest.TestCase):
             all_ids.extend(job['id'] for job in data['items'])
         self.assertEqual(len(set(all_ids)),27)
 
+    def test_degree_corresponding_to_highest_education_is_not_literal_degree_text(self):
+        requirement='与最高学历相对应的学位'
+        for education,degree,status in [('本科','学士','matched'),('本科','工学学士','matched'),
+            ('硕士','硕士学位','matched'),('博士','博士','matched'),('硕士','学士','unmet'),
+            ('本科','无学位','unmet'),('本科','','pending'),('','学士','pending'),
+            ('研究生','硕士','pending'),('本科','硕士','pending')]:
+            with self.subTest(education=education,degree=degree):
+                result=self.evaluate(profile=self.profile(education=education,degree=degree),degree_requirement=requirement)
+                check=next(c for c in result['checks'] if c['field']=='学位')
+                self.assertEqual(check['status'],status,check)
+        result=self.evaluate(profile=self.profile(education='本科',degree='学士'),degree_requirement=requirement)
+        self.assertEqual(result['status'],'matched')
+
+    def test_corresponding_degree_job_survives_default_candidate_query(self):
+        from app.db import import_repository as repo
+        row=self.row(major_requirement='计算机类',degree_requirement='与最高学历相对应的学位')
+        repo.confirm_import_task_data(self.task([row]))
+        _,data=asyncio.run(fixtures.request('POST','/api/v1/jobs/eligibility',{'profile':self.profile()}))
+        self.assertEqual(data['total'],1)
+        self.assertEqual(data['items'][0]['status'],'matched')
+
     def test_authentication_protects_full_query(self):
         settings.AUTH_ENABLED=True
         self.assertEqual(asyncio.run(fixtures.request('POST','/api/v1/jobs/eligibility',{}))[0],401)

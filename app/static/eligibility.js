@@ -147,7 +147,8 @@ function renderEligibilityResults(data) {
     eligibilityPage = data.page;
     eligibilityPages = data.total_pages;
     document.getElementById("eligibilitySummary").textContent =
-        `扫描范围 ${formatNumber(data.scope_total)} 个岗位，基础条件未发现冲突 ${formatNumber(data.basic_candidate_count)} 个；当前显示条件下共有 ${formatNumber(data.total)} 个结果。`;
+        `扫描范围 ${formatNumber(data.scope_total)} 个岗位，基础条件未发现冲突 ${formatNumber(data.basic_candidate_count)} 个；当前显示条件下共有 ${formatNumber(data.total)} 个结果。`
+        + (eligibilityQuery?.status === "unmet" ? " 正在查看被排除的岗位；切换“条件匹配 + 待核验”查看候选。" : "");
     document.getElementById("eligibilityCounts").textContent =
         `条件匹配 ${formatNumber(data.counts.matched)} · 待核验 ${formatNumber(data.counts.pending)} · 明确不符合 ${formatNumber(data.counts.unmet)}`;
     document.getElementById("eligibilityPageInfo").textContent = data.total_pages

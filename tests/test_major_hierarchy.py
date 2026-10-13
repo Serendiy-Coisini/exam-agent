@@ -33,33 +33,26 @@ class MajorHierarchyTests(unittest.TestCase):
         result = check_major({'major_requirement': '专业不限'}, {}, {'status': 'missing', 'entries': []})
         self.assertEqual((result['status'], result['restriction_level']), ('matched', 'unrestricted'))
 
-    def test_all_catalog_paths_report_the_first_failing_hierarchy_level(self):
+    def test_all_catalog_majors_resolve_outward_without_broadening_specific_jobs(self):
         for row in CATALOG['entries']:
             profile=dict(major=row['name'],major_code=row['code'])
             for target in CATALOG['entries']:
                 result=self.check(target['code'],**profile)
-                if row['discipline_code'] != target['discipline_code']:
-                    self.assertEqual(result['status'],'unmet')
-                    self.assertIn('门类不符合',result['reason'])
-                    self.assertNotIn('专业类不符合',result['reason'])
-                elif row['category_code'] != target['category_code']:
-                    self.assertEqual(result['status'],'unmet')
-                    self.assertIn('专业类不符合',result['reason'])
-                    self.assertNotIn('具体专业不符合',result['reason'])
-                elif row['code'] != target['code']:
-                    self.assertEqual(result['status'],'unmet')
-                    self.assertIn('具体专业不符合',result['reason'])
-                else:
-                    self.assertEqual(result['status'],'matched')
-                    self.assertIn('门类匹配',result['reason'])
-                    self.assertIn('专业类匹配',result['reason'])
-                    self.assertIn('具体专业匹配',result['reason'])
+                self.assertEqual(result['status'],'matched' if row['code']==target['code'] else 'unmet')
+                self.assertIn('具体专业匹配' if row['code']==target['code'] else '具体专业不符合',result['reason'])
+            for key,label in [('category_name','专业类'),('discipline_name','门类')]:
+                result=self.check(row[key],**profile)
+                self.assertEqual(result['status'],'matched')
+                self.assertIn(label+'匹配',result['reason'])
+                path=result['reason'].split('；')[0]
+                self.assertLess(path.index(row['name']),path.index(row['category_name']))
+                self.assertLess(path.index(row['category_name']),path.index(row['discipline_name']))
 
-    def test_nested_hierarchy_stops_at_mismatching_outer_discipline(self):
+    def test_nested_hierarchy_preserves_parent_constraints_with_unknown_details(self):
         result=self.check('晨文学(晨语类(未编目细分方向))')
         self.assertEqual(result['status'],'unmet')
-        self.assertIn('门类不符合',result['reason'])
-        self.assertNotIn('专业类匹配',result['reason'])
+        self.assertIn('专业类不符合',result['reason'])
+        self.assertNotIn('门类匹配',result['reason'])
         result=self.check('星工学(星造类(未编目细分方向))')
         self.assertEqual(result['status'],'unmet')
         self.assertIn('专业类不符合',result['reason'])
@@ -68,8 +61,21 @@ class MajorHierarchyTests(unittest.TestCase):
     def test_outer_rejection_is_per_alternative_instead_of_global(self):
         result=self.check('晨文学(晨语类(未编目细分方向))、星算工程')
         self.assertEqual(result['status'],'matched')
-        self.assertIn('门类不符合',result['reason'])
+        self.assertNotIn('门类不符合',result['reason'])
         self.assertIn('具体专业匹配',result['reason'])
+
+    def test_specific_alternative_is_checked_before_category_and_discipline(self):
+        result=self.check('星工学、星算类、星算工程')
+        self.assertEqual(result['status'],'matched')
+        self.assertIn('具体专业匹配',result['reason'])
+        self.assertNotIn('专业类匹配',result['reason'])
+        self.assertNotIn('门类匹配',result['reason'])
+
+    def test_nested_specific_restrictions_are_evaluated_before_their_parents(self):
+        result=self.check('星工学(星算类(星算工程))')
+        self.assertEqual(result['status'],'matched')
+        self.assertLess(result['reason'].index('具体专业匹配'),result['reason'].index('专业类匹配'))
+        self.assertLess(result['reason'].index('专业类匹配'),result['reason'].index('门类匹配'))
 
     def test_exact_specialty_and_hierarchy(self):
         for requirement, level in [('星算工程', 'specialty'), ('800101星算工程', 'specialty'),

@@ -112,3 +112,13 @@ test('temporary grassroots and law certificate override profile during filtering
     assert.equal(sent.profile.law_a_certificate,false);
     assert.equal(sent.major_restriction_level,'category');
 });
+
+test('the result summary identifies the rejected-only view',()=>{
+    const {c,element:e}=setup();
+    vm.runInContext("eligibilityQuery={status:'unmet'}",c);
+    c.renderEligibilityResults({page:1,total_pages:1,total:10,scope_total:20,basic_candidate_count:8,items:[],counts:{matched:0,pending:10,unmet:10}});
+    assert.match(e('eligibilitySummary').textContent,/正在查看.*明确不符合|正在查看.*被排除/);
+    vm.runInContext("eligibilityQuery={status:'candidate'}",c);
+    c.renderEligibilityResults({page:1,total_pages:1,total:10,scope_total:20,basic_candidate_count:8,items:[],counts:{matched:0,pending:10,unmet:10}});
+    assert.doesNotMatch(e('eligibilitySummary').textContent,/正在查看.*被排除/);
+});

@@ -46,6 +46,25 @@ def _unrestricted(value):
     return bool(re.fullmatch(r'(?:不限|不限制|无|无要求|不要求|专业不限|学历不限|身份不限)',value))
 
 
+def _corresponding_degree(required, profile):
+    actual = normalized(profile.get('degree'))
+    education = normalized(profile.get('education') or profile.get('education_level'))
+    expected = {'本科':'学士', '大学本科':'学士', '普通本科':'学士',
+                '硕士':'硕士', '硕士研究生':'硕士', '博士':'博士', '博士研究生':'博士'}.get(education)
+    degree = re.fullmatch(r'(?:哲学|经济学|法学|教育学|文学|历史学|理学|工学|农学|医学|管理学|艺术学)?(学士|硕士|博士)(?:学位)?',actual)
+    if actual in {'无','没有','无学位','没有学位'}:
+        status = 'unmet'
+    elif not expected or not degree:
+        status = 'pending'
+    elif degree[1] == expected:
+        status = 'matched'
+    elif ['学士','硕士','博士'].index(degree[1]) < ['学士','硕士','博士'].index(expected):
+        status = 'unmet'
+    else:
+        status = 'pending'
+    return check('学位',status,required,f'画像学历：{education or "未填写"}；学位：{actual or "未填写"}；对应学位：{expected or "待核验"}')
+
+
 def _basic(job, profile):
     checks=[]
     for field,user_field,label in [('education_requirement','education','学历'),
@@ -53,6 +72,9 @@ def _basic(job, profile):
         required=normalized(job.get(field))
         actual=normalized(profile.get(user_field) or (profile.get('education_level') if user_field=='education' else ''))
         if _unrestricted(required) or (not required and field=='degree_requirement'):
+            continue
+        if field=='degree_requirement' and re.fullmatch(r'(?:与)?(?:最高|报考|所报考)学历(?:相)?对应(?:的)?学位', required):
+            checks.append(_corresponding_degree(required, profile))
             continue
         if not required or _empty(actual):
             checks.append(check(label,'pending',required or '原表未提供明确要求','画像或岗位要求不完整'))
