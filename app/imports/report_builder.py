@@ -15,6 +15,7 @@ def build_import_report(
     warnings: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
+        "aggregated_roster_rows": sum(int(sheet.get("aggregated_roster_rows") or 0) for sheet in sheet_reports),
         "total_rows": total_rows,
         "valid_rows": valid_rows,
         "warning_rows": warning_rows,

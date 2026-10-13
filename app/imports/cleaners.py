@@ -9,6 +9,7 @@ from functools import lru_cache
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.imports.interview_roster import InterviewRoster, OFFICIAL_CUTOFF_HEADERS, CANDIDATE_NUMBER_HEADERS
 from app.tools.province_registry import PROVINCE_NAME_BY_SLUG, detect_province_in_text
 
 
@@ -115,6 +116,7 @@ class CleanResult:
     total_rows: int = 0
     warning_rows: int = 0
     duplicate_rows: int = 0
+    aggregated_roster_rows: int = 0
 
 
 def _combine_job_major_requirements(row: dict[str, Any]) -> None:
@@ -184,10 +186,27 @@ def clean_table_rows(
     required_any_groups: list[list[str]] | None = None,
     sub_header_row_index: int | None = None,
     data_start_row_index: int | None = None,
+    shared_roster: InterviewRoster | None = None,
 ) -> CleanResult:
     """Normalize source rows into standard fields and collect warnings."""
     defaults = defaults or {}
     result = CleanResult()
+    header = raw_rows[header_row_index] if 0 <= header_row_index < len(raw_rows) else []
+    header_rows = [header]
+    if sub_header_row_index is not None and 0 <= sub_header_row_index < len(raw_rows):
+        header_rows.append(raw_rows[sub_header_row_index])
+    candidate_column = next((index for header_values in header_rows
+                             for index, value in enumerate(header_values)
+                             if normalize_header(value) in CANDIDATE_NUMBER_HEADERS), None)
+    min_column = column_indexes.get("min_score")
+    roster = (shared_roster if shared_roster is not None else InterviewRoster()) if (
+        table_type == "score_line_table" and candidate_column is not None
+        and min_column is not None
+        and any(normalize_header(values[min_column]).startswith(marker)
+                for values in header_rows if min_column < len(values)
+                for marker in OFFICIAL_CUTOFF_HEADERS)
+    ) else None
+    roster_start = roster.source_rows if roster is not None else 0
     seen_keys: set[str] = set()
     warning_row_indexes: set[int] = set()
     current_section_title = ""
@@ -231,7 +250,7 @@ def clean_table_rows(
 
         if "extra_fields_json" in clean_row:
             clean_row["extra_fields_json"] = json.dumps(
-                _build_extra_fields(raw_row, unmapped_columns or {}),
+                _build_extra_fields(raw_row, {} if roster else (unmapped_columns or {})),
                 ensure_ascii=False,
                 separators=(",", ":"),
                 default=str,
@@ -379,6 +398,21 @@ def clean_table_rows(
         ) or row_had_warning
 
         row_key = build_row_key(table_type, clean_row)
+        if roster is not None:
+            if not clean_row.get("job_code"):
+                row_had_warning = True
+                _append_warning(result.warnings, row_index=row_index, message="面试名单缺少职位代码，该记录不入库",
+                                raw_value=None, field="job_code")
+            if "department_code" in column_indexes and not clean_row.get("department_code"):
+                row_had_warning = True
+                _append_warning(result.warnings, row_index=row_index, message="面试名单缺少部门代码，所属岗位不入库",
+                                raw_value=None, field="department_code")
+            candidate = raw_row[candidate_column] if candidate_column < len(raw_row) else None
+            if roster.add(row_key, clean_row, row_index, clean_value(candidate), row_had_warning):
+                _append_warning(result.warnings, row_index=row_index,
+                                message="同一岗位的最低面试分数不一致或无效，该岗位全部记录不入库，请核对原表",
+                                raw_value=row_key, field="cutoff_conflict")
+            continue
         if row_key in seen_keys:
             result.duplicate_rows += 1
             row_had_warning = True
@@ -404,6 +438,12 @@ def clean_table_rows(
         else:
             result.valid_rows.append(clean_row)
 
+    if roster is not None:
+        result.aggregated_roster_rows = roster.source_rows - roster_start
+        if shared_roster is None:
+            result.rows, rejected_indexes = roster.finish()
+            result.valid_rows = list(result.rows)
+            warning_row_indexes.update(index for _, index in rejected_indexes)
     result.warning_rows = len(warning_row_indexes)
     return result
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.imports.interview_roster import OFFICIAL_CUTOFF_HEADERS
 from app.imports.cleaners import normalize_header
 
 
@@ -183,12 +184,12 @@ FIELD_ALIASES = {
         "region": ["地区", "地市", "城市", "考区"],
         "exam_type": ["考试类型", "招考类型"],
         "unit_name": ["用人司局", "招录机关", "招考单位", "用人单位", "单位名称", "招录单位", "招录单位名称", "报考机关"],
-        "job_name": ["职位名称", "岗位名称", "职位", "岗位", "报考职位名称"],
+        "job_name": ["招考职位", "职位名称", "岗位名称", "职位", "岗位", "报考职位名称"],
         "job_code": ["职位代码", "职位序号", "岗位代码", "报考职位代码", "报考岗位代码", "代码"],
         "recruit_count": ["招考人数", "招录人数", "招聘人数", "计划人数", "计划招录人数"],
         "interview_count": ["进面人数", "进入面试人数", "面试人数", "入围人数"],
         "major_category": ["专业类别", "专业大类", "专业"],
-        "min_score": ["最低进面分", "进面分数线", "进面分数", "进面分", "最低分", "最低笔试成绩", "最低进面分数"],
+        "min_score": [*OFFICIAL_CUTOFF_HEADERS, "最低进面分", "进面分数线", "进面分数", "进面分", "最低分", "最低笔试成绩", "最低进面分数"],
         "max_score": ["最高分", "最高进面分", "最高笔试成绩"],
         "avg_score": ["平均分", "平均成绩", "平均进面分"],
     },
@@ -553,6 +554,9 @@ def _match_header(
     for alias_normalized, target_field, _ in alias_entries:
         if normalized_header == alias_normalized:
             return target_field
+
+    if any(normalize_header(header) in normalized_header for header in OFFICIAL_CUTOFF_HEADERS):
+        return "min_score" if any(target == "min_score" for _, target, _ in alias_entries) else ""
 
     for alias_normalized, target_field, alias_text in alias_entries:
         if alias_text in BROAD_ALIASES:

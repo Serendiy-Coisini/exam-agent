@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.imports.cleaners import normalize_header
+from app.imports.interview_roster import OFFICIAL_CUTOFF_HEADERS, CANDIDATE_NUMBER_HEADERS
 from app.imports.field_mapper import map_fields
 from app.imports.import_type_registry import IMPORT_TYPE_REGISTRY
 
@@ -83,6 +84,7 @@ TYPE_KEYWORDS = {
         "机构层级",
     ],
     "score_line_table": [
+        *OFFICIAL_CUTOFF_HEADERS,
         "最低进面分",
         "进面分数线",
         "进面分数",
@@ -138,6 +140,7 @@ MAJOR_CATALOG_STRUCTURAL_GROUPS = {
 }
 
 SCORE_LINE_STRONG_KEYWORDS = [
+    *OFFICIAL_CUTOFF_HEADERS,
     "进面分数线",
     "最低进面分",
     "最低分",
@@ -255,13 +258,29 @@ def detect_table_type(
     if not cells:
         return DetectionResult()
 
+    has_candidate = any(normalize_header(header) in table_cells for header in CANDIDATE_NUMBER_HEADERS)
+    has_official_cutoff = any(cell.startswith(normalize_header(header)) for cell in table_cells for header in OFFICIAL_CUTOFF_HEADERS)
+    personal_score_cells = [cell for cell in cells
+                            if not any(normalize_header(header) in cell for header in OFFICIAL_CUTOFF_HEADERS)]
+    has_personal_score = bool(_matched_keywords(personal_score_cells,
+        ["笔试成绩", "笔试分数", "笔试总分", "面试成绩", "面试分数", "总成绩", "总分"]))
     scored_candidates: list[dict[str, Any]] = []
     job_features = _matched_feature_groups(table_cells, JOB_STRUCTURAL_GROUPS)
     major_features = _matched_feature_groups(table_cells, MAJOR_CATALOG_STRUCTURAL_GROUPS)
     for table_type, keywords in TYPE_KEYWORDS.items():
-        matches = _matched_keywords(cells, keywords)
+        matches = _matched_keywords(personal_score_cells if table_type == "candidate_score_table" else cells, keywords)
         features: list[str] = []
         score = len(matches) * 2
+        if table_type == "score_line_table" and has_official_cutoff:
+            score += 20
+            features.append("官方最低面试分数字段")
+        if table_type == "candidate_score_table" and has_candidate and has_personal_score:
+            score += 16
+        if table_type == "review_candidate_list" and has_candidate and not has_personal_score and not has_official_cutoff:
+            score += 12
+        if table_type == "job_table" and has_candidate:
+            score -= 14
+            features.append("存在考生身份字段，已降低岗位表评分")
         if table_type == "review_candidate_list" and _matched_keywords(
             cells,
             ["进入资格复审", "资格复审", "资格审查"],
@@ -269,8 +288,8 @@ def detect_table_type(
             score += 10
             features.append("资格复审/资格审查明确标识")
         if table_type == "candidate_score_table":
-            score += _candidate_score_bonus(cells)
-            if _candidate_score_bonus(cells):
+            score += _candidate_score_bonus(personal_score_cells)
+            if _candidate_score_bonus(personal_score_cells):
                 features.append("成绩、排名或考生级字段组合")
         if table_type == "score_line_table" and _matched_keywords(cells, SCORE_LINE_STRONG_KEYWORDS):
             score += 9

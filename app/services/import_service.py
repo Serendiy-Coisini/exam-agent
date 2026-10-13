@@ -17,6 +17,7 @@ from app.db.import_repository import (
     save_import_template,
     sanitize_dataset_row_for_display,
 )
+from app.imports.interview_roster import InterviewRoster
 from app.imports.cleaners import clean_table_rows, clean_value, normalize_header
 from app.imports.field_mapper import (
     editable_standard_fields_for,
@@ -893,6 +894,7 @@ def _clean_import_tables(
     rules: dict[str, Any],
     warnings: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    shared_roster = InterviewRoster() if detected_type == "score_line_table" else None
     cleaned_rows: list[dict[str, Any]] = []
     valid_rows: list[dict[str, Any]] = []
     field_mapping: dict[str, str] = {}
@@ -998,6 +1000,7 @@ def _clean_import_tables(
 
         clean_result = clean_table_rows(
             raw_rows=raw_table.rows,
+            shared_roster=shared_roster,
             header_row_index=mapping.header_row_index,
             column_indexes=mapping.column_indexes,
             unmapped_columns=mapping.unmapped_columns,
@@ -1037,10 +1040,22 @@ def _clean_import_tables(
                 "data_start_row": effective_data_start_index + 1,
                 "field_mapping": mapping.field_mapping,
                 "total_rows": clean_result.total_rows,
+                "aggregated_roster_rows": clean_result.aggregated_roster_rows,
                 "valid_rows": len(clean_result.valid_rows),
                 "warning_rows": clean_result.warning_rows,
             }
         )
+
+    if shared_roster is not None and shared_roster.source_rows:
+        roster_rows, rejected_indexes = shared_roster.finish()
+        cleaned_rows.extend(roster_rows)
+        valid_rows.extend(roster_rows)
+        warning_rows += len(rejected_indexes)
+        for report in sheet_reports:
+            if report.get("aggregated_roster_rows"):
+                sheet = report["sheet_name"]
+                report["valid_rows"] = sum(row.get("source_sheet") == sheet for row in roster_rows)
+                report["warning_rows"] = sum(source_sheet == sheet for source_sheet, _ in rejected_indexes)
 
     if unmapped_headers_seen:
         unmapped_count = len(unmapped_headers_seen)
@@ -1048,7 +1063,9 @@ def _clean_import_tables(
             {
                 "row_index": None,
                 "level": "warning",
-                "message": f"有 {unmapped_count} 个原表字段未映射，已作为原表字段保留。",
+                "message": (f"有 {unmapped_count} 个原表字段未映射，未用于岗位分数线汇总；考生身份字段已排除。"
+                            if any(sheet.get("aggregated_roster_rows") for sheet in sheet_reports)
+                            else f"有 {unmapped_count} 个原表字段未映射，已作为原表字段保留。"),
                 "raw_value": "",
                 "field": "unmapped_fields_preserved",
                 "source_column": "",
@@ -1238,6 +1255,8 @@ def _infer_data_granularity(
     table_type: str,
     source_mapping: dict[str, str],
 ) -> str:
+    if table_type == "score_line_table":
+        return "job_level"
     if table_type != "candidate_score_table":
         return "unknown"
     context = _collect_import_context(file_name, raw_tables)
@@ -1523,6 +1542,11 @@ def _infer_import_defaults(
     inferred_exam = _infer_exam_type(file_name) or _infer_exam_type(text)
     resolved_exam = exam_type or inferred_exam
     is_national_jobs = table_type == "job_table" and (inferred_exam == "国考" or resolved_exam == "国考")
+    is_national_scores = table_type == "score_line_table" and resolved_exam == "国考"
+    national_score_scope = is_national_scores and (
+        any(marker in file_name for marker in ["中央机关", "中央国家机关", "全国"])
+        or not (province or _infer_province(file_name))
+    )
     if table_type == "score_line_table" and inferred_year is not None:
         selected_year = inferred_year
         if year is not None and year != inferred_year:
@@ -1538,7 +1562,7 @@ def _infer_import_defaults(
             )
     return (
         {
-            "province": "全国" if is_national_jobs else (province or _infer_province(file_name) or _infer_province(text)),
+            "province": "全国" if (is_national_jobs or national_score_scope) else (province or _infer_province(file_name) or _infer_province(text)),
             "exam_type": "国考" if is_national_jobs else resolved_exam,
             "year": selected_year,
         },

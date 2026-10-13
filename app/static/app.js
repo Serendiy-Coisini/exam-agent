@@ -5161,16 +5161,18 @@ function renderImportSummary(data) {
     if (!container) {
         return;
     }
+    const isRoster = Number(data?.import_report?.aggregated_roster_rows || 0) > 0;
     const items = [
         ["识别类型", data?.detected_type_label || "未识别"],
         ...(data?.multi_output ? [["输出数据集", `${normalizeArray(data?.outputs).length} 个`]] : []),
+        ...(isRoster ? [["汇总规则", "同一岗位的官方最低分须一致；按准考证号去重统计进面人数"]] : []),
         ["识别置信度", formatConfidence(data?.confidence)],
         ["数据粒度", formatImportGranularity(data?.data_granularity)],
         ["省份", data?.province || "未识别"],
         ["年份", data?.year || "未识别"],
         ["考试类型", data?.exam_type || "未识别"],
-        [data?.multi_output ? "读取源行" : "读取记录", formatNumber(data?.total_rows)],
-        [data?.multi_output ? "有效输出记录" : "有效记录", formatNumber(data?.valid_rows)],
+        [isRoster ? "读取人员记录" : (data?.multi_output ? "读取源行" : "读取记录"), formatNumber(data?.total_rows)],
+        [isRoster ? "汇总有效岗位" : (data?.multi_output ? "有效输出记录" : "有效记录"), formatNumber(data?.valid_rows)],
         [data?.multi_output ? "输出异常记录" : "异常记录", formatNumber(data?.warning_rows)],
         ["当前状态", formatImportWorkflowStatus(data?.status)],
         ...(data?.header_row ? [["主表头行", `第 ${data.header_row} 行`]] : []),
