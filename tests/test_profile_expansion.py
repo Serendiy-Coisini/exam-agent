@@ -76,6 +76,20 @@ class ProfileExpansion(unittest.TestCase):
             self.assertEqual(check['status'],'unmet')
             self.assertEqual(all_rows['items'][0]['major_restriction_level'],'category')
 
+    def test_unlisted_other_majors_are_rejected_instead_of_pending_candidates(self):
+        from app.db import import_repository as repo
+        from app.tools import major_hierarchy
+        row=self.row(major_requirement='晨语类、未编目晨语方向')
+        repo.confirm_import_task_data(self.task([row]))
+        with patch.object(major_hierarchy,'_catalog_state',return_value=(CATALOG,major_hierarchy._prepare(CATALOG))):
+            payload={'profile':{'education':'本科','major':'星算工程'}}
+            _,candidates=asyncio.run(fixtures.request('POST','/api/v1/jobs/eligibility',payload))
+            self.assertEqual(candidates['total'],0)
+            self.assertEqual(candidates['counts']['unmet'],1)
+            _,all_rows=asyncio.run(fixtures.request('POST','/api/v1/jobs/eligibility',payload|{'status':'all'}))
+            professional=next(c for c in all_rows['items'][0]['checks'] if c['field']=='专业')
+            self.assertEqual(professional['status'],'unmet')
+
     def test_unknown_catalog_and_unrecognized_hierarchy_never_match(self):
         from app.db import import_repository as repo
         from app.tools import major_hierarchy

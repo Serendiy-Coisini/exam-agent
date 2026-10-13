@@ -3,7 +3,7 @@ import re
 import unicodedata
 
 from app.tools.job_tool import _score_education
-from app.tools.major_hierarchy import check_major
+from app.tools.major_hierarchy import check_major, MAJOR_EXTRA_QUALIFIER
 from app.tools.profile_qualification_rules import consume_qualification_clause, evaluate_basic_identity, evaluate_grassroots_requirement
 
 ALTERNATIVE = re.compile(r'或|任一|其中一|任选|任意一|之一|也可')
@@ -222,11 +222,11 @@ def _remark_checks(text, profile, job=None):
 
 def evaluate_job(job, profile, check_remarks=True):
     checks=_basic(job,profile)
-    # Non-code parentheses are additional requirements, never discarded silently.
+    # Non-major parenthetical qualifications are checked separately.
     major_check = next((item for item in checks if item['field'] == '专业'), {})
-    major_extras = re.findall(r'\(([^)]*)\)',normalized(job.get('major_requirement'))) if major_check.get('status') == 'pending' else []
+    major_extras = re.findall(r'\(([^)]*)\)',normalized(job.get('major_requirement'))) if major_check.get('status') != 'unmet' else []
     for extra in major_extras:
-        if not re.fullmatch(r'(?:专业代码[:：]?)?\d{4,8}',extra.strip()):
+        if MAJOR_EXTRA_QUALIFIER.search(extra):
             if re.search(r'[、,，;；/]|或',normalized(job.get('major_requirement'))):
                 checks.append(check('专业附加要求','pending',normalized(job.get('major_requirement')),'专业列表中的附加条件作用范围不明确，需要核验'))
             else:

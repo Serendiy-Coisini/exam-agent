@@ -1,7 +1,7 @@
 """Exact undergraduate major hierarchy matching from a private local catalog.
 
-Names never use substring or similarity matching. Unparsed constraints and
-unsupported education stages deliberately retain three-valued uncertainty.
+Names never use substring or similarity matching. A complete, supported profile
+uses binary major matching; unavailable profile/catalog inputs remain unknown.
 """
 import copy
 import json
@@ -13,9 +13,10 @@ from pathlib import Path
 
 CATALOG_PATH = Path(__file__).resolve().parents[2] / 'data' / 'major_catalog.json'
 _CODE = re.compile(r'\d{6,7}(?:T|K|TK)?')
-_UNRESTRICTED = {'不限', '专业不限', '不限专业', '无专业要求', '无要求', '不限制', '无'}
+_UNRESTRICTED = {'不限', '专业不限', '不限专业', '无专业要求', '无要求', '不限制', '无限制', '不限制专业', '专业不限制', '无'}
 _STAGE_LABEL = r'博士研究生|硕士研究生|大学本科|大学专科|研究生|本科|专科|大专|高职'
 _SECTIONS = re.compile(r'(' + _STAGE_LABEL + r')\s*[:：]')
+MAJOR_EXTRA_QUALIFIER = re.compile(r'限[男女](?!性?学)|[男女]性(?!学)|英语(?:[四六46]级|要求|成绩|水平|证书)|CET|四级|六级|证书|资格|户籍|户口|基层|服役|应届|毕业年份|学历|学位|本科|专科|研究生|硕士|博士|学士|全日制|师范|定向|双学位|辅修', re.I)
 
 
 def _text(value):
@@ -58,8 +59,10 @@ def _prepare(catalog):
     if len(set(disciplines.values())) != len(disciplines):
         return None
     terms = {}
+    choices = {}
 
     def add(term, value):
+        choices.setdefault(term, []).append(value)
         if term in terms and terms[term] != value:
             terms[term] = None
         else:
@@ -75,7 +78,8 @@ def _prepare(catalog):
         for term in (code, name, code + name, name + '门类', name + '学科门类',
                      '学科门类:' + name):
             add(term, ('discipline', code))
-    return dict(codes=codes, names=names, terms=terms, categories=categories, disciplines=disciplines)
+    return dict(codes=codes, names=names, terms=terms, categories=categories, disciplines=disciplines, choices=choices,
+                punctuated_terms=tuple(term for term in choices if any(char in term for char in '、,;；/或\n')))
 
 
 @lru_cache(maxsize=4)
@@ -178,8 +182,14 @@ def _scoped_requirement(job, stage):
     return '、'.join(selected), raw
 
 
-def _split_terms(value):
-    """Split alternatives only outside parentheses, preserving constraints."""
+def _split_terms(value, catalog_index=None):
+    """Split alternatives outside parentheses and canonical catalog names."""
+    protected = set()
+    for term in (catalog_index or {}).get('punctuated_terms', ()):
+        start = value.find(term)
+        while start >= 0:
+            protected.update(range(start, start + len(term)))
+            start = value.find(term, start + len(term))
     parts, start, depth, index = [], 0, 0, 0
     while index < len(value):
         char = value[index]
@@ -189,7 +199,7 @@ def _split_terms(value):
             depth -= 1
             if depth < 0:
                 return None
-        elif depth == 0 and (char in '、,;；/\n' or char == '或'):
+        elif depth == 0 and index not in protected and (char in '、,;；/\n' or char == '或'):
             parts.append(value[start:index].strip())
             start = index + 1
         index += 1
@@ -221,7 +231,7 @@ def _match_major_path(level, code, entry, index, trace):
 
 def _major_priority(part):
     priority = {'specialty': 0, 'category': 1, 'discipline': 2, 'unrestricted': 3}
-    return min(priority[level] for level in part[1])
+    return min(priority.get(level, 4) for level in part[1])
 
 
 def _any_major_match(parsed, entry):
@@ -256,49 +266,50 @@ def _intersect_major_match(outer, inner, entry, exclusion=False, trace=None):
     return None if left is None or right is None else True
 
 
+def _restriction_levels(parts):
+    levels = set().union(*(part[1] for part in parts)) - {'unknown'}
+    return levels or {'unknown'}
+
+
 def _parse(value, index, trace=None):
-    """Return a predicate and restriction levels, or fail closed on unknowns."""
+    """Resolve allowed levels; unrecognized job terms are non-matches."""
     if trace is None:
         trace = []
     value = re.sub(r'\s+', '', value)
-    direct = index['terms'].get(value)
-    if direct:
-        level, code = direct
-        return lambda entry: _match_major_path(level, code, entry, index, trace), {level}
-    parts = _split_terms(value)
-    if parts is None:
-        return None
-    if len(parts) > 1:
+    choices = set(index['choices'].get(value, []))
+    if choices:
+        parsed = [(lambda entry, level=level, code=code: _match_major_path(level, code, entry, index, trace), {level})
+                  for level, code in choices]
+        return lambda entry: _any_major_match(parsed, entry), _restriction_levels(parsed)
+    parts = _split_terms(value, index)
+    if parts and len(parts) > 1:
         parsed = [_parse(part, index, trace) for part in parts]
-        if any(part is None for part in parsed):
-            return None
-        return lambda entry: _any_major_match(parsed, entry), set().union(*(part[1] for part in parsed))
+        return lambda entry: _any_major_match(parsed, entry), _restriction_levels(parsed)
     if value in _UNRESTRICTED:
-        return lambda entry: True, {'unrestricted'}
-    if '(' in value:
+        def unrestricted(entry):
+            trace.append('岗位专业不限')
+            return True
+        return unrestricted, {'unrestricted'}
+    if parts is not None and '(' in value:
         match = re.fullmatch(r'([^()]+)\((.*)\)', value)
-        if not match:
-            return None
-        outer = _parse(match[1], index, trace)
-        inner_text = match[2]
-        exclusion = re.match(r'(不含|不包括|不包含|除外:?)', inner_text)
-        if exclusion:
-            inner_text = inner_text[exclusion.end():]
-        inner = _parse(inner_text, index, trace)
-        if outer is None:
-            return None
-        if inner is None:
-            # A narrower, unrecognized specialization cannot erase a known
-            # outer category mismatch. Keep in-category applicants uncertain.
-            # Explicit alternatives/broadenings may change the outer scope.
-            if (not outer[1] <= {'category', 'discipline'} or not inner_text
-                    or re.search(r'或|不限|其他|也可|可报|放宽|但|除外|不要求|不限制|男|女|户籍|户口|英语|四级|六级|CET|证书|应届|毕业|基层|服务|资格|人员', inner_text, re.I)):
-                return None
-            return lambda entry: False if outer[0](entry) is False else None, outer[1]
-        if exclusion:
-            return lambda entry: _intersect_major_match(outer, inner, entry, True, trace), outer[1]
-        return lambda entry: _intersect_major_match(outer, inner, entry), inner[1]
-    return None
+        if match:
+            outer = _parse(match[1], index, trace)
+            inner_text = match[2]
+            exclusion = re.match(r'(不含|不包括|不包含|除外:?)', inner_text)
+            if exclusion:
+                inner = _parse(inner_text[exclusion.end():], index, trace)
+                return lambda entry: _intersect_major_match(outer, inner, entry, True, trace), outer[1]
+            if MAJOR_EXTRA_QUALIFIER.search(inner_text):
+                # Non-major conditions are evaluated independently by the
+                # qualification rules, never used to erase a major match.
+                return outer
+            inner_text = re.sub(r'^(?:或者|或|含|包括)', '', inner_text)
+            only = re.match(r'(仅限|只限|限于)', inner_text)
+            inner = _parse(inner_text[only.end():] if only else inner_text, index, trace)
+            if only:
+                return lambda entry: _intersect_major_match(outer, inner, entry), inner[1]
+            return lambda entry: _any_major_match((outer, inner), entry), outer[1] if outer[1] != {'unknown'} else inner[1]
+    return lambda entry: False, {'unknown'}
 
 
 def check_major(job, profile, catalog=None):
@@ -315,35 +326,42 @@ def check_major(job, profile, catalog=None):
 
     if requirement in _UNRESTRICTED:
         return result('matched', '适用学历层次专业不限', 'unrestricted')
-    if not requirement:
-        return result('pending', '没有明确且适用于画像学历层次的专业要求')
     if catalog is None:
         _, index = _catalog_state()
     else:
         index = _prepare(catalog)
     if index is None:
         return result('pending', '本地专业目录缺失或存在歧义，须核对原始目录')
-    trace = []
-    parsed = _parse(_text(requirement), index, trace)
-    if parsed is None:
-        return result('pending', '专业要求包含未识别名称、代码或附加限制，须核验原文')
-    levels = parsed[1]
-    level = next(iter(levels)) if len(levels) == 1 else 'mixed'
     if stage != 'bachelor':
-        return result('pending', '当前目录仅适用于本科专业，画像专业学历层次尚不能据此确认', level)
+        return result('pending', '当前目录仅适用于本科专业，画像专业学历层次尚不能据此确认')
     name, code = _text(profile.get('major')), _text(profile.get('major_code'))
     entry = index['names'].get(name)
     if entry is None or (code and code != entry['code']):
-        return result('pending', '画像毕业专业名称或代码不能共同解析为目录中的唯一专业', level)
+        return result('pending', '画像毕业专业名称或代码不能共同解析为目录中的唯一专业')
     for field, key, name_key in [('major_discipline', 'discipline_code', 'discipline_name'),
                                  ('major_category', 'category_code', 'category_name')]:
         actual = re.sub(r'\s+', '', _text(profile.get(field)))
         if actual and actual not in {entry[key], entry[name_key], entry[key] + entry[name_key]}:
-            return result('pending', '手填画像专业层级与权威目录记录不一致', level)
+            return result('pending', '手填画像专业层级与权威目录记录不一致')
+    if not requirement and job.get('major_requirement_' + stage) and job.get('major_requirement'):
+        return result('pending', '分层专业字段与原始要求冲突，需修正导入数据')
+    trace = []
+    parsed = _parse(_text(requirement), index, trace)
+    levels = parsed[1]
+    level = next(iter(levels)) if len(levels) == 1 else 'mixed'
     matched = parsed[0](entry)
     path = ' → '.join(filter(None, (f"{entry['name']}（{entry['code']}）", entry['category_name'],
                                     entry['discipline_name'])))
-    reason = f"画像专业路径：{path}；逐级核验：" + '；'.join(trace)
-    if matched is None:
-        return result('pending', reason + '；括号内专业或附加限制仍须核验', level)
+    reason = f"画像专业路径：{path}"
+    if trace:
+        reason += '；逐级核验：' + '；'.join(trace)
+    if not matched:
+        if '命中排除专业范围' in trace:
+            reason += '；命中岗位明确排除项，明确不符合'
+        elif re.search(r'仅限|只限|限于', requirement):
+            reason += '；未满足岗位明确的仅限专业条件，明确不符合'
+        else:
+            reason += '；具体专业、专业类、门类及专业不限均未命中，明确不符合'
+    elif not trace:
+        reason += '已命中岗位允许的专业范围'
     return result('matched' if matched else 'unmet', reason, level)

@@ -67,6 +67,16 @@ class EligibilityTests(unittest.TestCase):
         self.assertEqual(data['total'],1)
         self.assertEqual(data['items'][0]['status'],'matched')
 
+    def test_major_matches_while_parenthetical_nonmajor_conditions_are_separate(self):
+        for gender,overall in [('男','matched'),('女','unmet')]:
+            result=self.evaluate(profile=self.profile(gender=gender),major_requirement='软件工程（限男性）')
+            professional=next(c for c in result['checks'] if c['field']=='专业')
+            self.assertEqual(professional['status'],'matched')
+            self.assertEqual(result['status'],overall)
+        result=self.evaluate(major_requirement='软件工程（须全日制本科）')
+        self.assertEqual(next(c for c in result['checks'] if c['field']=='专业')['status'],'matched')
+        self.assertEqual(result['status'],'pending')
+
     def test_authentication_protects_full_query(self):
         settings.AUTH_ENABLED=True
         self.assertEqual(asyncio.run(fixtures.request('POST','/api/v1/jobs/eligibility',{}))[0],401)
