@@ -61,6 +61,21 @@ class ProfileExpansion(unittest.TestCase):
             _,overridden=asyncio.run(fixtures.request('POST','/api/v1/jobs/eligibility',{'status':'all','profile':{'law_a_certificate':False}}))
             self.assertEqual(overridden['items'][0]['status'],'unmet')
 
+    def test_default_candidates_exclude_other_category_with_unrecognized_subspecialties(self):
+        from app.db import import_repository as repo
+        from app.tools import major_hierarchy
+        row=self.row(major_requirement='大学本科:8101晨语类(晨语学、未编目晨语方向);研究生:星算类')
+        repo.confirm_import_task_data(self.task([row]))
+        profile={'education':'本科','major':'星算工程'}
+        with patch.object(major_hierarchy,'_catalog_state',return_value=(CATALOG,major_hierarchy._prepare(CATALOG))):
+            _,candidates=asyncio.run(fixtures.request('POST','/api/v1/jobs/eligibility',{'profile':profile}))
+            self.assertEqual(candidates['total'],0)
+            self.assertEqual(candidates['counts']['unmet'],1)
+            _,all_rows=asyncio.run(fixtures.request('POST','/api/v1/jobs/eligibility',{'profile':profile,'status':'all'}))
+            check=next(c for c in all_rows['items'][0]['checks'] if c['field']=='专业')
+            self.assertEqual(check['status'],'unmet')
+            self.assertEqual(all_rows['items'][0]['major_restriction_level'],'category')
+
     def test_unknown_catalog_and_unrecognized_hierarchy_never_match(self):
         from app.db import import_repository as repo
         from app.tools import major_hierarchy

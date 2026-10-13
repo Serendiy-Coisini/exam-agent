@@ -199,6 +199,22 @@ def _split_terms(value):
     return parts if all(parts) else None
 
 
+def _any_major_match(parsed, entry):
+    decisions = [part[0](entry) for part in parsed]
+    if True in decisions:
+        return True
+    return None if None in decisions else False
+
+
+def _intersect_major_match(outer, inner, entry, exclusion=False):
+    left, right = outer[0](entry), inner[0](entry)
+    if exclusion and right is not None:
+        right = not right
+    if left is False or right is False:
+        return False
+    return None if left is None or right is None else True
+
+
 def _parse(value, index):
     """Return a predicate and restriction levels, or fail closed on unknowns."""
     value = re.sub(r'\s+', '', value)
@@ -214,7 +230,7 @@ def _parse(value, index):
         parsed = [_parse(part, index) for part in parts]
         if any(part is None for part in parsed):
             return None
-        return lambda entry: any(part[0](entry) for part in parsed), set().union(*(part[1] for part in parsed))
+        return lambda entry: _any_major_match(parsed, entry), set().union(*(part[1] for part in parsed))
     if value in _UNRESTRICTED:
         return lambda entry: True, {'unrestricted'}
     if '(' in value:
@@ -227,11 +243,19 @@ def _parse(value, index):
         if exclusion:
             inner_text = inner_text[exclusion.end():]
         inner = _parse(inner_text, index)
-        if outer is None or inner is None:
+        if outer is None:
             return None
+        if inner is None:
+            # A narrower, unrecognized specialization cannot erase a known
+            # outer category mismatch. Keep in-category applicants uncertain.
+            # Explicit alternatives/broadenings may change the outer scope.
+            if (not outer[1] <= {'category', 'discipline'} or not inner_text
+                    or re.search(r'或|不限|其他|也可|可报|放宽|但|除外|不要求|不限制|男|女|户籍|户口|英语|四级|六级|CET|证书|应届|毕业|基层|服务|资格|人员', inner_text, re.I)):
+                return None
+            return lambda entry: False if outer[0](entry) is False else None, outer[1]
         if exclusion:
-            return lambda entry: outer[0](entry) and not inner[0](entry), outer[1]
-        return lambda entry: outer[0](entry) and inner[0](entry), inner[1]
+            return lambda entry: _intersect_major_match(outer, inner, entry, True), outer[1]
+        return lambda entry: _intersect_major_match(outer, inner, entry), inner[1]
     return None
 
 
@@ -274,5 +298,7 @@ def check_major(job, profile, catalog=None):
         if actual and actual not in {entry[key], entry[name_key], entry[key] + entry[name_key]}:
             return result('pending', '手填画像专业层级与权威目录记录不一致', level)
     matched = parsed[0](entry)
+    if matched is None:
+        return result('pending', '画像专业未与已识别的外层范围冲突，但括号内专业或附加限制仍须核验', level)
     return result('matched' if matched else 'unmet',
                   f"毕业专业：{entry['name']}（{entry['code']}）；按目录逐级精确核对", level)

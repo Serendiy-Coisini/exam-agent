@@ -55,6 +55,25 @@ class MajorHierarchyTests(unittest.TestCase):
         self.assertEqual(self.check('星算类（星图工程、星算工程）')['status'], 'matched')
         self.assertEqual(self.check('星算类（仅限人工智能方向）')['status'], 'pending')
 
+    def test_known_outer_category_rejects_unrelated_major_despite_unknown_inner_name(self):
+        requirement = '大学本科:8101晨语类(晨语学、未编目晨语方向);研究生:8001星算类'
+        result = self.check(requirement)
+        self.assertEqual((result['status'], result['restriction_level']), ('unmet', 'category'))
+        self.assertEqual(result['evidence'], requirement)
+        self.assertEqual(self.check('星算类(星算工程、未编目星算方向)')['status'], 'pending')
+
+    def test_partial_parentheses_preserve_three_valued_alternatives(self):
+        self.assertEqual(self.check('晨语类(未编目方向)、星算工程')['status'], 'matched')
+        self.assertEqual(self.check('晨语类(未编目方向)、星造类(未编目方向)')['status'], 'unmet')
+        self.assertEqual(self.check('晨语类(未编目方向)、星算类(未编目方向)')['status'], 'pending')
+        self.assertEqual(self.check('星算类(不含未编目方向)')['status'], 'pending')
+        self.assertEqual(self.check('晨语类(不含未编目方向)')['status'], 'unmet')
+
+    def test_outer_category_is_not_assumed_for_broadening_or_unknown_wrappers(self):
+        for requirement in ['晨语类(或星算工程)', '晨语类(其他相关专业也可)', '未编目类(星造工程)', '晨语类(限男性)、星算工程', '晨语学(限男性)、星算工程']:
+            self.assertEqual(self.check(requirement)['status'], 'pending', requirement)
+        self.assertEqual(self.check('晨语类(未编目方向)', education='研究生')['status'], 'pending')
+
     def test_exclusions_are_applied_and_unknown_exclusions_stay_pending(self):
         self.assertEqual(self.check('星算类（不含星算工程）')['status'], 'unmet')
         self.assertEqual(self.check('星算类（不含星图工程）')['status'], 'matched')
