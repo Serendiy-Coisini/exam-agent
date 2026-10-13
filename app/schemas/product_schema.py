@@ -1,6 +1,6 @@
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Optional, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class DevLoginRequest(BaseModel):
@@ -24,6 +24,23 @@ class UserProfilePayload(BaseModel):
     education_level: Optional[str] = Field(None, max_length=80)
     degree: Optional[str] = Field(None, max_length=80)
     major: Optional[str] = Field(None, max_length=200)
+    hukou_province: Optional[str] = Field(None, max_length=80)
+    hukou_city: Optional[str] = Field(None, max_length=80)
+    hukou_county: Optional[str] = Field(None, max_length=80)
+    fresh_graduate_scope: Optional[Literal['', 'current_year', 'retained', 'not_fresh']] = None
+    service_projects: list[Literal['大学生村官', '特岗教师', '三支一扶', '西部计划', '高校毕业生退役士兵']] = Field(default_factory=list, max_length=5)
+    service_projects_reviewed: Optional[bool] = None
+    service_completed: Optional[bool] = None
+    service_assessment_passed: Optional[bool] = None
+    service_years: Optional[float] = Field(None, ge=0, le=60)
+    retired_soldier: Optional[bool] = None
+    retired_college_graduate: Optional[bool] = None
+    military_years: Optional[float] = Field(None, ge=0, le=60)
+    law_a_certificate: Optional[bool] = None
+    major_code: Optional[str] = Field(None, max_length=40)
+    major_discipline: Optional[str] = Field(None, max_length=80)
+    major_category: Optional[str] = Field(None, max_length=100)
+    major_education: Optional[str] = Field(None, max_length=80)
     gender: Optional[str] = Field(None, pattern="^(男|女)?$")
     cet4_score: Optional[int] = Field(None, ge=0, le=710)
     cet6_score: Optional[int] = Field(None, ge=0, le=710)
@@ -42,6 +59,14 @@ class UserProfilePayload(BaseModel):
     work_preference: Optional[str] = Field(None, max_length=500)
     risk_preference: Optional[str] = Field(None, max_length=80)
     raw_profile_json: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode='before')
+    @classmethod
+    def validate_raw_aliases(cls, value):
+        if isinstance(value, dict) and isinstance(value.get('raw_profile_json'), dict):
+            raw = value['raw_profile_json']
+            return {**{key: item for key, item in raw.items() if key in cls.model_fields and key != 'raw_profile_json'}, **value}
+        return value
 
     # Web 工作台兼容字段，统一保存到 raw_profile_json。
     province: Optional[str] = Field(None, max_length=80)

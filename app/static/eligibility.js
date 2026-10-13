@@ -1,3 +1,5 @@
+const SERVICE_PROJECT_FIELDS = Object.freeze({Village:"大学生村官",Teacher:"特岗教师",Three:"三支一扶",West:"西部计划",Soldier:"高校毕业生退役士兵"});
+
 let eligibilityQuery = null;
 let eligibilityRequestId = 0;
 let eligibilityPage = 1;
@@ -23,6 +25,15 @@ function readEligibilityProfileFields(prefix) {
         return value === "" ? null : value === "yes";
     };
     return {
+        hukou_province: getValue(prefix + "HukouProvince"), hukou_city: getValue(prefix + "HukouCity"), hukou_county: getValue(prefix + "HukouCounty"),
+        grassroots_years: number("Grassroots"), fresh_graduate_scope: getValue(prefix + "FreshScope"),
+        service_projects: Object.entries(SERVICE_PROJECT_FIELDS).filter(([name]) => document.getElementById(prefix + "Service" + name)?.checked).map(([,label]) => label),
+        service_projects_reviewed: document.getElementById(prefix + "ServiceKnown")?.checked ? true : null,
+        service_completed: proof("ServiceCompleted"), service_assessment_passed: proof("ServiceAssessment"), service_years: number("ServiceYears"),
+        retired_soldier: proof("RetiredSoldier"), retired_college_graduate: proof("RetiredCollege"), military_years: number("MilitaryYears"),
+        law_a_certificate: proof("LawA"),
+        major_code: getValue(prefix + "MajorCode"), major_discipline: getValue(prefix + "MajorDiscipline"),
+        major_category: getValue(prefix + "MajorCategory"), major_education: getValue(prefix + "MajorEducation"),
         gender: getValue(prefix + "Gender"),
         graduation_year: number("GraduationYear"),
         cet4_score: number("Cet4"), cet6_score: number("Cet6"),
@@ -33,17 +44,34 @@ function readEligibilityProfileFields(prefix) {
 }
 
 function renderEligibilityProfileFields(prefix, profile) {
-    const values = {Gender: profile.gender, GraduationYear: profile.graduation_year,
+    const proof = value => value == null ? "" : (value ? "yes" : "no");
+    const values = {HukouProvince: profile.hukou_province, HukouCity: profile.hukou_city, HukouCounty: profile.hukou_county,
+        Grassroots: profile.grassroots_years, FreshScope: profile.fresh_graduate_scope,
+        ServiceCompleted: proof(profile.service_completed), ServiceAssessment: proof(profile.service_assessment_passed), ServiceYears: profile.service_years,
+        RetiredSoldier: proof(profile.retired_soldier), RetiredCollege: proof(profile.retired_college_graduate), MilitaryYears: profile.military_years,
+        LawA: proof(profile.law_a_certificate), MajorCode: profile.major_code, MajorDiscipline: profile.major_discipline,
+        MajorCategory: profile.major_category, MajorEducation: profile.major_education || profile.education || "",
+        Gender: profile.gender, GraduationYear: profile.graduation_year,
         Cet4: profile.cet4_score, Cet6: profile.cet6_score,
         Cet4Passed: profile.cet4_passed == null ? "" : (profile.cet4_passed ? "yes" : "no"),
         Cet6Passed: profile.cet6_passed == null ? "" : (profile.cet6_passed ? "yes" : "no"),
         Certificates: normalizeArray(profile.certificates).join("；")};
     for (const [name,value] of Object.entries(values)) {
         const field = document.getElementById(prefix + name);
-        if (field) field.value = value ?? "";
+        if (field) {
+            field.value = value ?? "";
+            if (typeof refreshCustomSelect === "function" && field.tagName === "SELECT") refreshCustomSelect(field);
+        }
     }
+    for (const [name,label] of Object.entries(SERVICE_PROJECT_FIELDS)) {
+        const box = document.getElementById(prefix + "Service" + name);
+        if (box) box.checked = normalizeArray(profile.service_projects).includes(label);
+    }
+    const serviceKnown = document.getElementById(prefix + "ServiceKnown");
+    if (serviceKnown) serviceKnown.checked = profile.service_projects_reviewed === true;
     const known = document.getElementById(prefix + "CertificatesKnown");
     if (known) known.checked = profile.certificates_reviewed === true;
+    if (typeof renderMajorCatalogFields === "function") renderMajorCatalogFields(prefix, profile);
 }
 
 function initializeEligibilityPage() {
@@ -55,6 +83,7 @@ function initializeEligibilityPage() {
     document.getElementById("eligibilityCity").value = userProfile.city || "";
     document.getElementById("eligibilityExam").value = userProfile.exam_type || "";
     renderEligibilityProfileFields("eligibility", userProfile);
+    document.getElementById("eligibilityMajor").value = userProfile.major || "";
     document.getElementById("eligibilityProfileSummary").textContent = [
         userProfile.education || "学历未填写", userProfile.degree || "学位未填写",
         userProfile.major || "专业未填写", userProfile.identity || "身份未填写",
@@ -81,8 +110,8 @@ function markEligibilityFiltersDirty() {
 function handleEligibilitySubmit(event) {
     event.preventDefault();
     eligibilityQuery = {
-        profile: {...userProfile, ...readEligibilityProfileFields("eligibility"),
-            grassroots_years: userProfile.grassroots_years == null || userProfile.grassroots_years === "" ? null : Number(userProfile.grassroots_years)},
+        profile: {...userProfile, ...readEligibilityProfileFields("eligibility"), major: getValue("eligibilityMajor") || userProfile.major},
+        major_restriction_level: getValue("eligibilityMajorRestriction") || "all",
         province: getValue("eligibilityProvince"), city: getValue("eligibilityCity"),
         exam_type: getValue("eligibilityExam"), year: getValue("eligibilityYear") === "" ? null : Number(getValue("eligibilityYear")),
         check_remarks: document.getElementById("eligibilityRemarks").checked,
@@ -134,12 +163,14 @@ function renderEligibilityJob(job) {
     const labels = {matched:"条件匹配",pending:"待核验",unmet:"明确不符合"};
     const status = labels[job.status] ? job.status : "pending";
     const checks = normalizeArray(job.checks);
+    const majorLevels = {unrestricted:"不限专业",discipline:"门类",category:"专业类",specialty:"具体专业",mixed:"混合限制",unknown:"待识别"};
     return `<article class="eligibility-job surface-card">
         <div class="eligibility-job-heading"><h2>${escapeHtml(job.job_name || "未命名岗位")}</h2><span class="eligibility-status ${status}">${labels[status]}</span></div>
         <p>${escapeHtml(job.department_name || job.unit_name || "")} · ${escapeHtml(job.unit_name || "")}</p>
         <p class="eligibility-job-meta">${escapeHtml(job.province || "")} ${escapeHtml(job.region || "")} · ${escapeHtml(job.year || "")} ${escapeHtml(job.exam_type || "")} · 招录 ${escapeHtml(job.recruit_count ?? "未提供")} 人</p>
         <p class="eligibility-job-meta">部门代码 ${escapeHtml(job.department_code || "未提供")} · 职位代码 ${escapeHtml(job.job_code || "未提供")}</p>
         <p>${escapeHtml(job.education_requirement || "学历要求未提供")} · ${escapeHtml(job.major_requirement || "专业要求未提供")}</p>
+        <p class="eligibility-job-meta">专业限制层级：${majorLevels[job.major_restriction_level] || "待识别"}</p>
         <details><summary>查看核验依据与备注原文（${checks.length} 项）</summary>
             <ul>${checks.map(c => `<li><strong>${escapeHtml(c.field)} · ${labels[c.status] || "待核验"}</strong><p>${escapeHtml(c.evidence)}</p><small>${escapeHtml(c.reason)}</small></li>`).join("") || "<li>未发现额外资格限制。</li>"}</ul>
             <h3>备注原文</h3><p class="eligibility-original">${escapeHtml(job.remark || "原表未填写备注")}</p>

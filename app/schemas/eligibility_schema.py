@@ -9,6 +9,7 @@ class EligibilityRequest(BaseModel):
     city: str | None = Field(None, max_length=80)
     exam_type: str | None = Field(None, max_length=80)
     year: int | None = Field(None, ge=1900, le=2100)
+    major_restriction_level: Literal['all','unrestricted','discipline','category','specialty','mixed','unknown'] = 'all'
     check_remarks: bool = True
     status: Literal['candidate', 'all', 'matched', 'pending', 'unmet'] = 'candidate'
     keyword: str = Field('', max_length=200)

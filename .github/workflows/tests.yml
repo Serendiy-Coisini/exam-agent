@@ -16,4 +16,5 @@ jobs:
       - run: node --check app/static/app.js
       - run: node --check app/static/model-settings.js
       - run: node --check app/static/eligibility.js
-      - run: node --test tests/frontend.test.cjs tests/model-settings.test.cjs tests/eligibility.test.cjs
+      - run: node --check app/static/major-catalog.js
+      - run: node --test tests/frontend.test.cjs tests/model-settings.test.cjs tests/eligibility.test.cjs tests/major-catalog.test.cjs

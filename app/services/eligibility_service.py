@@ -14,7 +14,8 @@ from app.db.import_repository import _merge_public_job_extra_fields
 
 PUBLIC_REQUIREMENT_KEYS = {
     '性别','性别要求','英语','英语水平','英语要求','外语要求','证书要求','资格证书','专业技能证书',
-    '年龄','年龄要求','户籍','户籍要求','工作经历','工作经历要求','最低服务年限','服务年限',
+    '年龄','年龄要求','户籍','户籍要求','户口','户口要求','工作经历','工作经历要求','最低服务年限','服务年限',
+    '服务基层项目工作经历','服务基层项目','基层工作最低年限','基层工作年限','应届要求','法律职业资格',
 }
 
 PUBLIC_FIELDS = ('id','department_code','job_code','job_name','unit_name','department_name',
@@ -123,6 +124,8 @@ def query_eligible_jobs(payload: EligibilityRequest, stored_profile=None):
         if any(s.casefold() not in remark.casefold() for s in include) or any(s.casefold() in remark.casefold() for s in exclude):
             continue
         result=evaluate_job(job,profile,payload.check_remarks)
+        if payload.major_restriction_level != 'all' and result['major_restriction_level'] != payload.major_restriction_level:
+            continue
         if result['basic_status']!='unmet':
             basic_candidates+=1
         result['checks'].extend(location_checks)

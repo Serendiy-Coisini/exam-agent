@@ -3,6 +3,8 @@ import re
 import unicodedata
 
 from app.tools.job_tool import _score_education
+from app.tools.major_hierarchy import check_major
+from app.tools.profile_qualification_rules import consume_qualification_clause, evaluate_basic_identity, evaluate_grassroots_requirement
 
 ALTERNATIVE = re.compile(r'或|任一|其中一|任选|任意一|之一|也可')
 ENGLISH = re.compile(r'(?:全国大学英语|大学英语|英语)?[四六46]级|CET\s*-?\s*[46]', re.I)
@@ -63,40 +65,10 @@ def _basic(job, profile):
             else:
                 status='matched' if accepted else 'unmet'
             checks.append(check(label,status,required,f'画像填写：{actual}；附加学历性质须核验'))
-    required=normalized(job.get('major_requirement'))
-    actual=normalized(profile.get('major'))
-    if not _unrestricted(required):
-        tokens=[re.sub(r'\([^)]*\)|\d{4,8}','',t).strip() for t in re.split(r'[、，,；;/\n]|或者|或',required)]
-        if not required or _empty(actual):
-            status,reason='pending','画像或岗位专业要求不完整'
-        elif actual in tokens:
-            status,reason='matched',f'专业名称匹配：{actual}'
-        elif actual.endswith('类') or actual in required or any(t and (t in actual or t.endswith('类')) for t in tokens):
-            status,reason='pending','涉及专业大类、近似名称或分层要求，需要核对适用专业目录'
-        else:
-            status,reason='unmet',f'专业名单中未找到画像专业：{actual}'
-        checks.append(check('专业',status,required or '原表未提供明确要求',reason))
+    checks.append(check_major(job, profile))
     required=normalized(job.get('identity_requirement'))
-    actual=normalized(profile.get('identity'))
     if required and not _unrestricted(required):
-        status='pending'
-        if not _empty(actual):
-            if re.search(r'非|不|除',required) or ALTERNATIVE.search(required):
-                status='pending'
-            elif '应届' in required:
-                year=re.search(r'(20\d{2})',required)
-                if '应届' not in actual:
-                    status='unmet'
-                elif year:
-                    graduation=profile.get('graduation_year')
-                    status='pending' if not graduation else ('matched' if int(graduation)==int(year[1]) else 'unmet')
-                elif required in {'应届生','应届毕业生','应届高校毕业生','应届'}:
-                    status='matched'
-            elif required in {'往届生','往届'}:
-                status='matched' if '往届' in actual else 'unmet'
-            elif actual==required:
-                status='matched'
-        checks.append(check('身份',status,required,f'画像填写：{actual or "未填写"}；复杂身份认定需核验'))
+        checks.append(evaluate_basic_identity(required, profile, job))
     required=normalized(job.get('political_requirement'))
     actual=normalized(profile.get('political_status'))
     if required and not _unrestricted(required):
@@ -115,15 +87,8 @@ def _basic(job, profile):
             status='pending'
         checks.append(check('政治面貌',status,required,f'画像填写：{actual or "未填写"}'))
     required=normalized(job.get('grassroots_requirement'))
-    actual=profile.get('grassroots_years')
     if required and not _unrestricted(required):
-        match=re.search(r'(\d+|一|二|两|三|四|五)年',required)
-        if match and not _empty(actual) and not re.search(r'以下|以内|不超过|少于|至',required):
-            number={'一':1,'二':2,'两':2,'三':3,'四':4,'五':5}.get(match[1],int(match[1]) if match[1].isdigit() else 0)
-            status='matched' if float(actual)>=number else 'unmet'
-        else:
-            status='pending'
-        checks.append(check('基层经历',status,required,f'画像填写：{actual if actual is not None else "未填写"}年'))
+        checks.append(evaluate_grassroots_requirement(required, profile))
     return checks
 
 
@@ -180,7 +145,7 @@ def _certificates(clause, profile, found):
     return check('证书要求',combine(statuses,either=bool(ALTERNATIVE.search(clause))),clause,'仅按已填证书名称和明确等级核验；替代关系需人工核验')
 
 
-def _remark_checks(text, profile):
+def _remark_checks(text, profile, job=None):
     checks=[]
     for raw in re.split(r'[。；;\n]+|(?<!\d)\d+[.、](?=[^\d])',normalized(text)):
         clause=raw.strip(' ，,、.')
@@ -188,6 +153,11 @@ def _remark_checks(text, profile):
             continue
         if re.fullmatch(r'无|无其他要求|无特殊要求|不限|男女不限|性别不限|不限性别',clause):
             continue
+        additional, remaining_clause = consume_qualification_clause(clause, profile, job or {})
+        checks.extend(additional)
+        if not remaining_clause:
+            continue
+        clause = remaining_clause
         first_check=len(checks)
         english=list(ENGLISH.finditer(clause))
         gender=re.search(r'(?:仅限|限|只招|招录|性别[:：]?)(男性|女性|男|女)(?:考生|报考)?|(?:男性|女性)(?:考生|报考)',clause)
@@ -231,12 +201,14 @@ def _remark_checks(text, profile):
 def evaluate_job(job, profile, check_remarks=True):
     checks=_basic(job,profile)
     # Non-code parentheses are additional requirements, never discarded silently.
-    for extra in re.findall(r'\(([^)]*)\)',normalized(job.get('major_requirement'))):
+    major_check = next((item for item in checks if item['field'] == '专业'), {})
+    major_extras = re.findall(r'\(([^)]*)\)',normalized(job.get('major_requirement'))) if major_check.get('status') == 'pending' else []
+    for extra in major_extras:
         if not re.fullmatch(r'(?:专业代码[:：]?)?\d{4,8}',extra.strip()):
             if re.search(r'[、,，;；/]|或',normalized(job.get('major_requirement'))):
                 checks.append(check('专业附加要求','pending',normalized(job.get('major_requirement')),'专业列表中的附加条件作用范围不明确，需要核验'))
             else:
-                checks.extend(_remark_checks(extra,profile) if check_remarks else
+                checks.extend(_remark_checks(extra,profile,job) if check_remarks else
                               [check('专业附加要求','pending',extra,'尚未核验专业括号中的附加条件')])
     basic_status=combine(c['status'] for c in checks)
     for field in ('qualification_requirement','remark','eligibility_extra_requirements'):
@@ -244,7 +216,8 @@ def evaluate_job(job, profile, check_remarks=True):
         if not text:
             continue
         if check_remarks:
-            checks.extend(_remark_checks(text,profile))
+            checks.extend(_remark_checks(text,profile,job))
         else:
             checks.append(check('备注','pending',text,'尚未启用备注核验'))
-    return dict(status=combine(c['status'] for c in checks),basic_status=basic_status,checks=checks)
+    return dict(status=combine(c['status'] for c in checks),basic_status=basic_status,checks=checks,
+                major_restriction_level=major_check.get('restriction_level','unknown'))

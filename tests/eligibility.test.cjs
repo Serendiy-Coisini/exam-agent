@@ -70,3 +70,45 @@ test('empty grassroots years are sent as unknown rather than an invalid number',
     await Promise.resolve();
     assert.equal(sent.profile.grassroots_years,null);
 });
+
+
+test('extended qualifications round trip through reusable profile controls', () => {
+    const {c,element:e}=setup();
+    const values={hukou_province:'广东',hukou_city:'深圳',hukou_county:'南山区',grassroots_years:0,
+        fresh_graduate_scope:'current_year',service_projects:['三支一扶','西部计划'],
+        service_projects_reviewed:true,service_completed:false,service_assessment_passed:true,
+        service_years:0,retired_soldier:false,retired_college_graduate:false,military_years:0,
+        law_a_certificate:false,major_code:'990101',major_discipline:'虚构门类',major_category:'虚构专业类',major_education:'本科'};
+    c.renderEligibilityProfileFields('profile',values);
+    const profile=c.readEligibilityProfileFields('profile');
+    for(const key of Object.keys(values)) assert.deepEqual(JSON.parse(JSON.stringify(profile[key])),values[key],key);
+    c.renderEligibilityProfileFields('eligibility',values);
+    const temporary=c.readEligibilityProfileFields('eligibility');
+    for(const key of Object.keys(values)) assert.deepEqual(JSON.parse(JSON.stringify(temporary[key])),values[key],key);
+});
+
+test('My Profile and eligibility both expose extended qualification controls',()=>{
+    const html=fs.readFileSync('app/static/index.html','utf8');
+    for (const prefix of ['profile','eligibility']) {
+        for (const field of ['HukouProvince','HukouCity','HukouCounty','Grassroots','FreshScope',
+            'ServiceVillage','ServiceTeacher','ServiceThree','ServiceWest','ServiceSoldier',
+            'ServiceCompleted','ServiceAssessment','ServiceYears','RetiredSoldier','RetiredCollege',
+            'MilitaryYears','LawA','MajorCode','MajorDiscipline','MajorCategory','MajorEducation'])
+            assert.ok(html.includes(`id="${prefix}${field}"`),prefix+field);
+    }
+    assert.ok(html.includes('id="eligibilityMajorRestriction"'));
+});
+
+test('temporary grassroots and law certificate override profile during filtering',async()=>{
+    let sent;
+    const {c,element:e}=setup(async(url,options)=>{sent=JSON.parse(options.body);return {page:1,total_pages:0,items:[],counts:{matched:0,pending:0,unmet:0}};});
+    c.userProfile={grassroots_years:5,law_a_certificate:true};
+    e('eligibilityGrassroots').value='0';
+    e('eligibilityLawA').value='no';
+    e('eligibilityMajorRestriction').value='category';
+    c.handleEligibilitySubmit({preventDefault(){}});
+    await Promise.resolve();
+    assert.equal(sent.profile.grassroots_years,0);
+    assert.equal(sent.profile.law_a_certificate,false);
+    assert.equal(sent.major_restriction_level,'category');
+});

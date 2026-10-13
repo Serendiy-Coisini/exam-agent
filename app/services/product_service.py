@@ -2,9 +2,12 @@ import re
 from typing import Any
 
 from app.schemas.agent_schema import AgentAnalyzeRequest, ChatMessage
+from app.schemas.product_schema import UserProfilePayload
+from pydantic import ValidationError
 
 
 PROFILE_ALIAS_FIELDS = {
+    'hukou_province', 'hukou_city', 'hukou_county', 'fresh_graduate_scope', 'service_projects', 'service_projects_reviewed', 'service_completed', 'service_assessment_passed', 'service_years', 'retired_soldier', 'retired_college_graduate', 'military_years', 'law_a_certificate', 'major_code', 'major_discipline', 'major_category', 'major_education',
     "gender", "cet4_score", "cet6_score", "cet4_passed", "cet6_passed",
     "certificates", "certificates_reviewed",
     "grassroots_years",
@@ -74,6 +77,10 @@ def profile_payload_updates(payload: Any) -> dict[str, Any]:
     if "identity" in aliases and "is_fresh_graduate" not in data:
         identity = str(aliases["identity"] or "")
         data["is_fresh_graduate"] = True if "应届" in identity else None
+    scope = aliases.get("fresh_graduate_scope")
+    if scope in {"current_year", "retained", "not_fresh"}:
+        data["is_fresh_graduate"] = scope != "not_fresh"
+        raw_profile["identity"] = "往届生" if scope == "not_fresh" else "应届生"
     if "accept_relocation" in aliases and "work_preference" not in data:
         data["work_preference"] = f"异地意愿：{aliases['accept_relocation']}"
     data["raw_profile_json"] = sanitize_for_storage(raw_profile)
@@ -85,7 +92,23 @@ def serialize_profile(profile: dict[str, Any] | None) -> dict[str, Any]:
         return {}
     result = dict(profile)
     raw = dict(result.get("raw_profile_json") or {})
-    result.update({key: raw.get(key) for key in PROFILE_ALIAS_FIELDS if key in raw})
+    aliases = {key: raw[key] for key in PROFILE_ALIAS_FIELDS if key in raw}
+    # Older raw records may predate typed qualification fields. Treat malformed
+    # values as unknown, rather than crashing or turning them into known absence.
+    while True:
+        try:
+            aliases = UserProfilePayload(**aliases).model_dump(exclude_unset=True)
+            break
+        except ValidationError as error:
+            for issue in error.errors():
+                key = issue['loc'][0]
+                aliases.pop(key, None)
+                raw.pop(key, None)
+                if key in {'service_projects', 'certificates'}:
+                    aliases[key + '_reviewed'] = None
+                    raw[key + '_reviewed'] = None
+    result['raw_profile_json'] = raw
+    result.update(aliases)
     result["education"] = result.get("education") or result.get("education_level") or ""
     result["exam_type"] = result.get("exam_type") or result.get("target_exam_type") or ""
     if not result.get("identity") and result.get("is_fresh_graduate") is True:

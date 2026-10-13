@@ -23,7 +23,7 @@ const ANALYSIS_HISTORY_LIMIT = 200;
 const ANALYSIS_DISCLAIMER_TEXT = "数据来源与 AI 分析仅供参考，岗位资格、分数线、招录条件以官方公告、职位表和招录单位解释为准。AI 可能存在理解偏差，请在报名前自行核对原始公告。";
 const PROFILE_UNSET_OPTION = "未填写";
 const PROFILE_CORE_FIELDS = ["province", "exam_type", "education", "major", "identity"];
-const PROFILE_TRACKED_FIELDS = [...PROFILE_CORE_FIELDS, "city", "accept_relocation", "degree", "political_status", "grassroots_years", "gender", "graduation_year", "cet4_score", "cet6_score", "cet4_passed", "cet6_passed", "certificates", "certificates_reviewed"];
+const PROFILE_TRACKED_FIELDS = ["hukou_province", "hukou_city", "hukou_county", "fresh_graduate_scope", "service_projects", "service_projects_reviewed", "service_completed", "service_assessment_passed", "service_years", "retired_soldier", "retired_college_graduate", "military_years", "law_a_certificate", "major_code", "major_discipline", "major_category", "major_education", ...PROFILE_CORE_FIELDS, "city", "accept_relocation", "degree", "political_status", "grassroots_years", "gender", "graduation_year", "cet4_score", "cet6_score", "cet4_passed", "cet6_passed", "certificates", "certificates_reviewed"];
 const PROFILE_FIELD_LABELS = {
     province: "省份",
     exam_type: "考试类型",
@@ -1014,6 +1014,7 @@ async function restoreAuthSession() {
         const data = await apiFetch(AUTH_ME_API_URL);
         currentUser = data?.user || null;
         applyServerProfile(data?.profile);
+        if (typeof loadMajorCatalog === "function") await loadMajorCatalog(true);
     } catch {
         authToken = "";
         currentUser = null;
@@ -1195,7 +1196,7 @@ async function handleDevLoginSubmit(event) {
         const me = await apiFetch(AUTH_ME_API_URL);
         currentUser = me?.user || currentUser;
         applyServerProfile(me?.profile);
-        await Promise.all([loadAllFilterOptions(), loadDataCatalog()]);
+        await Promise.all([loadAllFilterOptions(), loadDataCatalog(), loadMajorCatalog(true)]);
         renderAccountState();
         document.getElementById("authDialog")?.close();
         await restoreActiveSessionMessages({ silent: true, navigate: false });
@@ -1215,6 +1216,7 @@ function applyServerProfile(profile) {
         return;
     }
     const mapped = normalizeUserProfile({
+        ...Object.fromEntries(PROFILE_TRACKED_FIELDS.filter(field => Object.hasOwn(profile, field)).map(field => [field, profile[field]])),
         exam_type: profile.exam_type || profile.target_exam_type || "",
         province: profile.province || "",
         city: profile.city || "",
@@ -2063,12 +2065,13 @@ function normalizeUserProfile(profile) {
     };
     normalized.preferences = normalizeArray(normalized.preferences);
     normalized.certificates = normalizeArray(normalized.certificates);
+    normalized.service_projects = normalizeArray(normalized.service_projects);
     const storedFilledFields = normalizeArray(normalized.filled_fields)
         .filter((field) => PROFILE_TRACKED_FIELDS.includes(field));
     normalized.filled_fields = storedFilledFields.length > 0
         ? storedFilledFields
         : PROFILE_TRACKED_FIELDS.filter((field) => {
-            const value = String(normalized[field] || "").trim();
+            const value = String(normalized[field] ?? "").trim();
             return Boolean(value && !["不限", "未设置", PROFILE_UNSET_OPTION, "请选择"].includes(value));
         });
     return normalized;
@@ -2101,7 +2104,7 @@ async function handleProfileSubmit(event) {
         city: readProfileFormValue("profileCity"),
         degree: getValue("profileDegree"),
         political_status: getValue("profilePolitical"),
-        grassroots_years: getValue("profileGrassroots"),
+        grassroots_years: getValue("profileGrassroots") === "" ? null : Number(getValue("profileGrassroots")),
         education: readProfileFormValue("profileEducation"),
         major: getValue("profileMajor"),
         identity: readProfileFormValue("profileIdentity"),
@@ -2110,7 +2113,8 @@ async function handleProfileSubmit(event) {
             .map((input) => input.value),
         filled_fields: []
     };
-    userProfile.filled_fields = PROFILE_TRACKED_FIELDS.filter((field) => String(userProfile[field] || "").trim());
+    if (userProfile.fresh_graduate_scope) userProfile.identity = userProfile.fresh_graduate_scope === "not_fresh" ? "往届生" : "应届生";
+    userProfile.filled_fields = PROFILE_TRACKED_FIELDS.filter((field) => String(userProfile[field] ?? "").trim());
     if (!saveStoredValue(PROFILE_STORAGE_KEY, userProfile)) {
         showToast("画像保存失败，请检查浏览器存储权限后重试。", "error");
         return;
@@ -2133,7 +2137,7 @@ async function handleProfileSubmit(event) {
                 ...readEligibilityProfileFields("profile"),
                 degree: userProfile.degree,
                 political_status: userProfile.political_status,
-                grassroots_years: userProfile.grassroots_years === "" ? null : Number(userProfile.grassroots_years),
+                grassroots_years: userProfile.grassroots_years == null || userProfile.grassroots_years === "" ? null : Number(userProfile.grassroots_years),
                 education_level: userProfile.education,
                 major: userProfile.major,
                 is_fresh_graduate: userProfile.identity.includes("应届"),

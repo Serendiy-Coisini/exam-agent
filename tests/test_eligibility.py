@@ -1,13 +1,26 @@
 """Full-profile eligibility uses fictional jobs and an isolated database."""
 import asyncio
 import unittest
+import json
+from pathlib import Path
+from unittest.mock import patch
 
 from tests import test_regressions as fixtures
 from app.core.config import settings
 
 
 class EligibilityTests(unittest.TestCase):
-    setUp = fixtures.AuditRegressions.setUp
+    def setUp(self):
+        fixtures.AuditRegressions.setUp(self)
+        from app.tools import major_hierarchy
+        entries = [dict(code=code, name=name, discipline_code='08', discipline_name='工学',
+                        category_code='0809', category_name='计算机类', source_page=1)
+                   for code, name in [('080901','计算机科学与技术'),('080902','软件工程'),('080903','网络工程')]]
+        catalog_path = Path(self.temp.name) / 'fictional-catalog.json'
+        catalog_path.write_text(json.dumps(dict(source_basename='fictional.pdf',source_sha256='a'*64,year=2099,entries=entries)),encoding='utf-8')
+        extra = patch.object(major_hierarchy, 'CATALOG_PATH', catalog_path)
+        extra.start()
+        self.patches.append(extra)
     tearDown = fixtures.AuditRegressions.tearDown
     row = fixtures.AuditRegressions.row
     task = fixtures.AuditRegressions.task

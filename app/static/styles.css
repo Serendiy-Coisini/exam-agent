@@ -6113,3 +6113,8 @@ body.context-collapsed #contextPanelToggle svg {
 .eligibility-pagination { position: sticky; top: 8px; z-index: 5; padding: 12px; margin: 16px 0; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
 
 .model-preset-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; }
+
+.qualification-subsection { border: 1px solid var(--border-color, #e1e5ed); border-radius: 12px; padding: 18px; margin: 8px 0; min-width: 0; }
+.qualification-subsection h3, .qualification-subsection legend { font-size: 15px; font-weight: 700; }
+.qualification-subsection p { color: var(--text-muted, #68748a); font-size: 13px; margin-bottom: 12px; }
+.service-project-options { display: grid; gap: 8px; margin: 8px 0 12px; }
