@@ -10,6 +10,7 @@ from app.imports.cleaners import normalize_header
 
 TABLE_STANDARD_FIELDS = {
     "job_table": [
+        "department_code",
         "year",
         "province",
         "region",
@@ -38,6 +39,7 @@ TABLE_STANDARD_FIELDS = {
         "extra_fields_json",
     ],
     "score_line_table": [
+        "department_code",
         "year",
         "province",
         "region",
@@ -57,6 +59,7 @@ TABLE_STANDARD_FIELDS = {
         "extra_fields_json",
     ],
     "candidate_score_table": [
+        "department_code",
         "year",
         "province",
         "region",
@@ -84,6 +87,7 @@ TABLE_STANDARD_FIELDS = {
         "extra_fields_json",
     ],
     "review_candidate_list": [
+        "department_code",
         "year",
         "province",
         "region",
@@ -115,6 +119,7 @@ TABLE_STANDARD_FIELDS = {
         "extra_fields_json",
     ],
     "signup_table": [
+        "department_code",
         "year",
         "province",
         "region",
@@ -146,11 +151,12 @@ TABLE_STANDARD_FIELDS = {
 
 FIELD_ALIASES = {
     "job_table": {
+        "department_code": ["部门代码", "招录机关代码", "招录部门代码"],
         "year": ["年份", "年度"],
         "province": ["省份", "省", "地区"],
         "region": ["地区", "地市", "城市", "工作地点", "职位所在地", "考区"],
         "exam_type": ["考试类型", "招考类型"],
-        "unit_name": ["招录机关", "招考单位", "用人单位", "单位名称", "招录单位", "招录单位名称", "报考机关"],
+        "unit_name": ["用人司局", "招录机关", "招考单位", "用人单位", "单位名称", "招录单位", "招录单位名称", "报考机关"],
         "department_name": ["主管部门", "部门名称", "部门"],
         "job_name": ["职位名称", "岗位名称", "职位", "岗位", "招考职位", "招录职位", "考录职位"],
         "job_code": ["职位代码", "岗位代码", "职位编码", "岗位编码", "职位编号", "岗位编号", "代码"],
@@ -162,7 +168,7 @@ FIELD_ALIASES = {
         "education_requirement": ["学历", "学历要求", "最低学历", "文化程度", "学历层次"],
         "political_requirement": ["政治面貌", "政治面貌要求"],
         "identity_requirement": ["应届生", "应届毕业生", "招考对象", "招录对象", "身份要求", "现有身份要求", "职位招考对象"],
-        "grassroots_requirement": ["基层工作经历", "基层经历", "基层工作经历要求"],
+        "grassroots_requirement": ["基层工作经历", "基层经历", "基层工作经历要求", "基层工作最低年限", "基层工作最低年限要求"],
         "recruit_count": ["招考人数", "招录人数", "考录人数", "招聘人数", "计划人数", "计划招录人数", "录用人数", "人数", "名额"],
         "qualification_requirement": ["资格条件", "报考资格条件", "资格要求"],
         "job_description": ["职位简介", "岗位简介", "职位描述", "岗位描述"],
@@ -171,11 +177,12 @@ FIELD_ALIASES = {
         "remark": ["备注", "其他", "其他要求", "其他条件"],
     },
     "score_line_table": {
+        "department_code": ["部门代码", "招录机关代码", "招录部门代码"],
         "year": ["年份", "年度"],
         "province": ["省份", "省"],
         "region": ["地区", "地市", "城市", "考区"],
         "exam_type": ["考试类型", "招考类型"],
-        "unit_name": ["招录机关", "招考单位", "用人单位", "单位名称", "招录单位", "招录单位名称", "报考机关"],
+        "unit_name": ["用人司局", "招录机关", "招考单位", "用人单位", "单位名称", "招录单位", "招录单位名称", "报考机关"],
         "job_name": ["职位名称", "岗位名称", "职位", "岗位", "报考职位名称"],
         "job_code": ["职位代码", "职位序号", "岗位代码", "报考职位代码", "报考岗位代码", "代码"],
         "recruit_count": ["招考人数", "招录人数", "招聘人数", "计划人数", "计划招录人数"],
@@ -186,6 +193,7 @@ FIELD_ALIASES = {
         "avg_score": ["平均分", "平均成绩", "平均进面分"],
     },
     "candidate_score_table": {
+        "department_code": ["部门代码", "招录机关代码", "招录部门代码"],
         "year": ["年份", "年度"],
         "province": ["省份", "省"],
         "region": ["地区", "地市", "城市", "考区"],
@@ -209,11 +217,12 @@ FIELD_ALIASES = {
         "remark": ["备注", "说明"],
     },
     "signup_table": {
+        "department_code": ["部门代码", "招录机关代码", "招录部门代码"],
         "year": ["年份", "年度"],
         "province": ["省份", "省"],
         "region": ["地区", "地市", "城市", "考区"],
         "exam_type": ["考试类型", "招考类型"],
-        "unit_name": ["招录机关", "招考单位", "用人单位", "单位名称", "招录单位", "招录单位名称", "报考机关"],
+        "unit_name": ["用人司局", "招录机关", "招考单位", "用人单位", "单位名称", "招录单位", "招录单位名称", "报考机关"],
         "job_name": ["职位名称", "岗位名称", "职位", "岗位", "报考职位名称"],
         "job_code": ["职位代码", "岗位代码", "报考职位代码", "报考岗位代码", "代码"],
         "recruit_count": ["招录人数", "招考人数", "招聘人数", "计划人数", "计划招录人数"],
@@ -258,7 +267,7 @@ REQUIRED_FIELDS = {
     "major_catalog": {"major_name"},
 }
 
-PROTECTED_DEFAULT_FIELDS = {"year", "province", "exam_type"}
+PROTECTED_DEFAULT_FIELDS = {"province", "exam_type"}
 BROAD_ALIASES = {"代码", "职位", "岗位", "单位", "部门", "专业", "学历", "学位", "人数", "地区"}
 BROAD_NORMALIZED_HEADERS = {normalize_header(alias) for alias in BROAD_ALIASES}
 
@@ -547,6 +556,8 @@ def _match_header(
 
     for alias_normalized, target_field, alias_text in alias_entries:
         if alias_text in BROAD_ALIASES:
+            continue
+        if normalized_header.endswith("代码") and not alias_normalized.endswith("代码"):
             continue
         if normalized_header in BROAD_NORMALIZED_HEADERS:
             continue

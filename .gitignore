@@ -96,3 +96,6 @@ copy_*
 *.bak
 *.tmp
 *.zip
+
+# Local launch state, audit backups and isolated verification artifacts
+.runtime/

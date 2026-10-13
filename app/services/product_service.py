@@ -5,6 +5,7 @@ from app.schemas.agent_schema import AgentAnalyzeRequest, ChatMessage
 
 
 PROFILE_ALIAS_FIELDS = {
+    "grassroots_years",
     "province",
     "city",
     "exam_type",
@@ -105,7 +106,7 @@ def apply_profile_defaults(
         return payload
 
     explicit = model_fields_set(payload)
-    updates: dict[str, Any] = {}
+    updates: dict[str, Any] = {"profile": combined}
     candidates = {
         "region": combined.get("province") or combined.get("target_region"),
         "city": combined.get("city"),

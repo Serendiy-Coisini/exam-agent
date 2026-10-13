@@ -33,6 +33,7 @@ IMPORT_TARGETS = {
     "job_table": {
         **_registered_target("job_table"),
         "fields": [
+            "department_code",
             "year",
             "province",
             "region",
@@ -61,6 +62,7 @@ IMPORT_TARGETS = {
     "score_line_table": {
         **_registered_target("score_line_table"),
         "fields": [
+            "department_code",
             "year",
             "province",
             "region",
@@ -83,6 +85,7 @@ IMPORT_TARGETS = {
     "candidate_score_table": {
         **_registered_target("candidate_score_table"),
         "fields": [
+            "department_code",
             "year",
             "province",
             "region",
@@ -113,6 +116,7 @@ IMPORT_TARGETS = {
     "review_candidate_list": {
         **_registered_target("review_candidate_list"),
         "fields": [
+            "department_code",
             "province",
             "year",
             "exam_type",
@@ -146,6 +150,7 @@ IMPORT_TARGETS = {
     "signup_table": {
         **_registered_target("signup_table"),
         "fields": [
+            "department_code",
             "year",
             "province",
             "region",
@@ -183,6 +188,8 @@ IMPORT_TARGETS = {
 DATASET_ROW_VIEWS: dict[str, dict[str, Any]] = {
     "job_table": {
         "columns": [
+            ("department_code", "部门代码", "department_code"),
+            ("department_name", "部门名称", "department_name"),
             ("job_code", "职位代码", "job_code"),
             ("job_name", "岗位名称", "job_name"),
             ("unit_name", "招录单位", "unit_name"),
@@ -276,6 +283,7 @@ DATASET_ROW_VIEWS: dict[str, dict[str, Any]] = {
 }
 
 SENSITIVE_DATASET_DISPLAY_FIELDS = {
+    "row_key", "_row_key_override", "upload_path", "raw_value",
     "candidate_name",
     "candidate_no",
     "admission_ticket",
@@ -469,6 +477,7 @@ def confirm_import_task_data(task: dict[str, Any]) -> dict[str, Any]:
     inserted_rows = 0
     duplicate_rows = 0
     adopted_seed_rows = 0
+    changed_rows = 0
     corrected_year_rows = 0
     now = utc_now()
 
@@ -498,6 +507,14 @@ def confirm_import_task_data(task: dict[str, Any]) -> dict[str, Any]:
             row_key = str(protected_row.get("_row_key_override") or "").strip()
             if not row_key:
                 row_key = build_row_key(table_type, protected_row)
+            if table_type in {"candidate_score_table", "review_candidate_list"} and protected_row.get("candidate_no"):
+                legacy = db.execute(
+                    f"SELECT row_key FROM {target_table} WHERE province = ? AND year = ? AND exam_type = ? AND job_code = ? AND candidate_no = ? AND department_code = ?",
+                    (protected_row.get("province"), protected_row.get("year"), protected_row.get("exam_type"),
+                     protected_row.get("job_code") or "", protected_row["candidate_no"], protected_row.get("department_code") or ""),
+                ).fetchall()
+                if len(legacy) == 1:
+                    row_key = legacy[0]["row_key"]
             values = [
                 task_id,
                 row_key,
@@ -511,7 +528,18 @@ def confirm_import_task_data(task: dict[str, Any]) -> dict[str, Any]:
             if cursor.rowcount:
                 inserted_rows += 1
             else:
-                duplicate_rows += 1
+                existing = db.execute(f"SELECT * FROM {target_table} WHERE row_key = ?", (row_key,)).fetchone()
+                business_fields = [field for field in fields if field not in {"source_file", "source_sheet"}]
+                changed = existing and any(existing[field] != _db_value(field, protected_row.get(field)) for field in business_fields)
+                if changed and source_kind != "builtin_seed":
+                    assignments = ", ".join(f"{field} = ?" for field in fields)
+                    db.execute(
+                        f"UPDATE {target_table} SET {assignments}, import_task_id = ?, source_kind = ?, updated_at = ? WHERE row_key = ?",
+                        (*[_db_value(field, protected_row.get(field)) for field in fields], task_id, source_kind, now, row_key),
+                    )
+                    changed_rows += 1
+                else:
+                    duplicate_rows += 1
                 if source_kind == "builtin_seed":
                     adopted = db.execute(
                         f"""
@@ -542,9 +570,9 @@ def confirm_import_task_data(task: dict[str, Any]) -> dict[str, Any]:
             )
 
         skipped_rows = warning_row_count + duplicate_rows
-        updated_rows = adopted_seed_rows
+        updated_rows = adopted_seed_rows + changed_rows
         dataset_id = ""
-        if inserted_rows > 0:
+        if inserted_rows + updated_rows > 0:
             dataset_exam_type = "exam_type" if table_type != "major_catalog" else "'' AS exam_type"
             dataset_row = db.execute(
                 f"""
@@ -567,15 +595,11 @@ def confirm_import_task_data(task: dict[str, Any]) -> dict[str, Any]:
                     source_kind=_normalize_source_kind(dataset_row["source_kind"]),
                 )
 
-        if inserted_rows <= 0:
-            final_status = "IMPORT_FAILED"
-            message = "入库失败：有效记录未写入数据库，请查看错误原因。"
-        elif skipped_rows > 0:
+        if warning_row_count > 0:
             final_status = "PARTIAL_IMPORTED"
-            message = f"部分入库成功：成功写入 {inserted_rows} 条，跳过 {skipped_rows} 条。"
         else:
             final_status = "IMPORTED"
-            message = f"入库完成：成功写入 {inserted_rows} 条，跳过 0 条。"
+        message = f"入库完成：新增 {inserted_rows} 条，更新 {updated_rows} 条，跳过 {skipped_rows} 条。"
         db.execute(
             """
             UPDATE import_tasks
@@ -655,16 +679,16 @@ def confirm_multi_output_task_data(task: dict[str, Any]) -> dict[str, Any]:
     warning_count = sum(_int_or_zero(item.get("warning_count")) for item in output_results)
     valid_rows = sum(_int_or_zero(item.get("valid_rows")) for item in output_results)
     warning_rows = sum(_int_or_zero(item.get("warning_rows")) for item in output_results)
-    failed_outputs = [item for item in output_results if _int_or_zero(item.get("inserted_count")) <= 0]
-    if inserted_count <= 0:
+    failed_outputs = [item for item in output_results if item.get("status") == "IMPORT_FAILED"]
+    if len(failed_outputs) == len(output_results):
         status = "IMPORT_FAILED"
         message = "入库失败：所有输出数据集均未写入有效记录。"
     elif skipped_count > 0 or failed_outputs:
         status = "PARTIAL_IMPORTED"
-        message = f"多输出入库部分完成：成功写入 {inserted_count} 条，跳过 {skipped_count} 条。"
+        message = f"多输出入库部分完成：新增 {inserted_count} 条，更新 {updated_count} 条，跳过 {skipped_count} 条。"
     else:
         status = "IMPORTED"
-        message = f"多输出入库完成：成功写入 {inserted_count} 条，跳过 0 条。"
+        message = f"多输出入库完成：新增 {inserted_count} 条，更新 {updated_count} 条，跳过 0 条。"
     targets = list(dict.fromkeys(str(item.get("target") or "") for item in output_results if item.get("target")))
     dataset_ids = [str(item.get("dataset_id") or "") for item in output_results if item.get("dataset_id")]
     now = utc_now()
@@ -774,31 +798,10 @@ def delete_dataset_data(dataset_id: str) -> dict[str, Any]:
     import_task_id = str(dataset.get("import_task_id") or "").strip()
 
     with connection() as db:
-        if import_task_id:
-            cursor = db.execute(
-                f"DELETE FROM {table} "
-                "WHERE import_task_id = ? AND storage = 'database'",
-                (import_task_id,),
-            )
-        else:
-            where = [
-                "storage = 'database'",
-                "province = ?",
-                "year = ?",
-                "source_file = ?",
-            ]
-            params: list[Any] = [
-                dataset.get("province_slug") or "",
-                dataset.get("year"),
-                dataset.get("source_file") or "",
-            ]
-            if table_type != "major_catalog":
-                where.append("exam_type = ?")
-                params.append(dataset.get("exam_type") or "")
-            cursor = db.execute(
-                f"DELETE FROM {table} WHERE {' AND '.join(where)}",
-                params,
-            )
+        where, params = _dataset_scope(dataset, table_type)
+        cursor = db.execute(
+            f"DELETE FROM {table} WHERE {' AND '.join(where)}", params,
+        )
         deleted_rows = int(cursor.rowcount or 0)
 
         if import_task_id:
@@ -1066,6 +1069,34 @@ def list_imported_dataset_summaries() -> list[dict[str, Any]]:
     return datasets
 
 
+def _dataset_scope(dataset: dict[str, Any], table_type: str) -> tuple[list[str], list[Any]]:
+    """Use identical business scope when listing and deleting dataset rows."""
+    where = [
+        "storage = ?",
+        "province = ?",
+        "year = ?",
+        "source_file = ?",
+        "source_kind = ?",
+        "import_task_id = ?",
+    ]
+    params: list[Any] = [
+        dataset.get("storage") or "database",
+        dataset.get("province_slug") or "",
+        dataset.get("year"),
+        dataset.get("source_file") or "",
+        dataset.get("source_kind") or "imported",
+        dataset.get("import_task_id") or "",
+    ]
+    if table_type != "major_catalog":
+        where.append("exam_type = ?")
+        params.append(dataset.get("exam_type") or "")
+    if table_type == "candidate_score_table":
+        where.append("data_granularity = ?")
+        params.append(dataset.get("data_granularity") or "")
+
+    return where, params
+
+
 def get_imported_dataset_rows(
     dataset_id: str,
     *,
@@ -1113,28 +1144,7 @@ def get_imported_dataset_rows(
         raise ValueError("当前字段不支持排序。")
 
     table = str(target["table"])
-    where = [
-        "storage = ?",
-        "province = ?",
-        "year = ?",
-        "source_file = ?",
-        "source_kind = ?",
-        "import_task_id = ?",
-    ]
-    params: list[Any] = [
-        dataset.get("storage") or "database",
-        dataset.get("province_slug") or "",
-        dataset.get("year"),
-        dataset.get("source_file") or "",
-        dataset.get("source_kind") or "imported",
-        dataset.get("import_task_id") or "",
-    ]
-    if table_type != "major_catalog":
-        where.append("exam_type = ?")
-        params.append(dataset.get("exam_type") or "")
-    if table_type == "candidate_score_table":
-        where.append("data_granularity = ?")
-        params.append(dataset.get("data_granularity") or "")
+    where, params = _dataset_scope(dataset, table_type)
 
     clean_keyword = str(keyword or "").strip()
     if clean_keyword:
@@ -1296,6 +1306,10 @@ def _is_sensitive_dataset_display_field(field_name: Any) -> bool:
     }:
         return True
     return any(marker in str(field_name or "") for marker in SENSITIVE_DATASET_FIELD_MARKERS)
+
+
+def list_imported_major_catalog(*, province: str = "", year: int | None = None, limit: int = 100000) -> list[dict[str, Any]]:
+    return _list_imported_rows("major_catalog", province=province, year=year, limit=limit)
 
 
 def list_imported_jobs(
@@ -1489,18 +1503,18 @@ def _protect_import_row(
         and str(raw_year_value).strip() != ""
         and not is_valid_year(raw_year)
     )
-    protected["year"] = fallback_year
+    protected["year"] = raw_year if is_valid_year(raw_year) else fallback_year
 
     fallback_province = str(defaults.get("province") or task.get("province") or "").strip()
     if not fallback_province:
         fallback_province = _infer_province_slug(str(task.get("file_name") or ""))
-    if fallback_province:
+    if fallback_province and not protected.get("province"):
         protected["province"] = fallback_province
 
     fallback_exam_type = str(defaults.get("exam_type") or task.get("exam_type") or "").strip()
     if not fallback_exam_type:
         fallback_exam_type = _infer_exam_type(str(task.get("file_name") or ""))
-    if fallback_exam_type:
+    if fallback_exam_type and not protected.get("exam_type"):
         protected["exam_type"] = fallback_exam_type
 
     protected["source_file"] = str(protected.get("source_file") or task.get("file_name") or "").strip()
@@ -1842,6 +1856,7 @@ def _build_score_sample_where(
     job_code: str = "",
     job_name: str = "",
     unit_name: str = "",
+    department_code: str = "",
 ) -> tuple[str, list[Any]]:
     where: list[str] = []
     params: list[Any] = []
@@ -1862,6 +1877,9 @@ def _build_score_sample_where(
         where.append(f"exam_type IN ({placeholders})")
         params.extend(exam_aliases)
 
+    if department_code:
+        where.append("department_code = ?")
+        params.append(str(department_code).strip())
     clean_code = str(job_code or "").strip()
     if clean_code:
         where.append("job_code = ?")
@@ -1941,6 +1959,7 @@ def get_review_score_summary_by_job(
     job_code: str = "",
     job_name: str = "",
     unit_name: str = "",
+    department_code: str = "",
 ) -> dict[str, Any] | None:
     """Return aggregate review-candidate score sample for one job without personal fields."""
     where_sql, params = _build_score_sample_where(
@@ -1950,6 +1969,7 @@ def get_review_score_summary_by_job(
         job_code=job_code,
         job_name=job_name,
         unit_name=unit_name,
+        department_code=department_code,
     )
     with connection() as db:
         rows = db.execute(
@@ -1974,6 +1994,7 @@ def get_candidate_score_summary_by_job(
     job_code: str = "",
     job_name: str = "",
     unit_name: str = "",
+    department_code: str = "",
 ) -> dict[str, Any] | None:
     """Return aggregate candidate-score sample for one job without personal fields."""
     where_sql, params = _build_score_sample_where(
@@ -1983,6 +2004,7 @@ def get_candidate_score_summary_by_job(
         job_code=job_code,
         job_name=job_name,
         unit_name=unit_name,
+        department_code=department_code,
     )
     with connection() as db:
         rows = db.execute(

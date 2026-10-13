@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from functools import lru_cache
 from dataclasses import dataclass, field
 from typing import Any
+
+from app.tools.province_registry import PROVINCE_NAME_BY_SLUG, detect_province_in_text
 
 
 NULL_MARKERS = {
@@ -242,8 +245,8 @@ def clean_table_rows(
         default_year = parse_year(defaults.get("year"))
         raw_year_value = clean_row.get("year")
         if "year" in clean_row:
-            clean_row["year"] = None
             parsed_raw_year = parse_int(raw_year_value) if raw_year_value is not None else None
+            clean_row["year"] = parsed_raw_year if is_valid_year(parsed_raw_year) else None
             if raw_year_value is not None and not is_valid_year(parsed_raw_year):
                 row_had_warning = True
                 if not illegal_year_warning_added:
@@ -260,12 +263,12 @@ def clean_table_rows(
                 and default_year is not None
                 and parsed_raw_year != default_year
             ):
-                row_had_warning = True
+                # A valid differing year is informative, not an invalid row.
                 if not mismatched_year_warning_added:
                     _append_warning(
                         result.warnings,
                         row_index=row_index,
-                        message=f"检测到表格年份字段与导入任务年份不一致，已使用导入任务年份 {default_year}。",
+                        message=f"检测到表格年份字段与导入任务年份不一致，已保留表格有效年份；导入任务年份 {default_year} 仅用于补全缺失年份。",
                         raw_value=raw_year_value,
                         field="year",
                     )
@@ -274,6 +277,9 @@ def clean_table_rows(
         _apply_default(clean_row, "year", default_year)
         _apply_default(clean_row, "province", defaults.get("province"))
         _apply_default(clean_row, "region", defaults.get("region"))
+        if table_type == "job_table" and defaults.get("exam_type") == "国考":
+            location = str(clean_row.get("region") or clean_row.get("work_address") or "")
+            clean_row["province"] = _national_job_province(location)
         _apply_default(clean_row, "exam_type", defaults.get("exam_type"))
         _apply_default(clean_row, "data_granularity", defaults.get("data_granularity"))
         _apply_default(clean_row, "source_sheet", defaults.get("source_sheet"))
@@ -402,11 +408,29 @@ def clean_table_rows(
     return result
 
 
+@lru_cache(maxsize=8192)
+def _national_job_province(location: str) -> str:
+    if re.search(r"全国|各地|不限", location):
+        return "全国"
+    locations = [value.strip() for value in re.split(r"[、，,；;/]|或者|或", location) if value.strip()]
+    provinces = {next((slug for slug, name in PROVINCE_NAME_BY_SLUG.items() if value.startswith(name)), None)
+                 or detect_province_in_text(value).get("slug") for value in locations}
+    if len(provinces) != 1 or "" in provinces:
+        return "全国"
+    return next(iter(provinces)) or "全国"
+
+
 def build_row_key(table_type: str, row: dict[str, Any]) -> str:
     """Build a stable dedupe key for one standardized row."""
     year = clean_value(row.get("year")) or ""
     province = clean_value(row.get("province")) or ""
     exam_type = clean_value(row.get("exam_type")) or ""
+    if table_type in {"candidate_score_table", "review_candidate_list"} and clean_value(row.get("candidate_no")):
+        # Identity must not include mutable scores/ranks, and exams are isolated.
+        return "|".join(str(value) for value in [table_type, province, year, exam_type,
+                         clean_value(row.get("department_code")) or "",
+                         clean_value(row.get("job_code")) or clean_value(row.get("job_name")) or "",
+                         clean_value(row.get("candidate_no"))])
     if table_type == "candidate_score_table":
         candidate_no = clean_value(row.get("candidate_no")) or ""
         code = clean_value(row.get("job_code")) or ""
@@ -429,6 +453,8 @@ def build_row_key(table_type: str, row: dict[str, Any]) -> str:
                 table_type,
                 str(province),
                 str(year),
+                str(exam_type),
+                *([str(clean_value(row.get("department_code")))] if clean_value(row.get("department_code")) else []),
                 *identity_parts,
             ]
         )
@@ -450,13 +476,15 @@ def build_row_key(table_type: str, row: dict[str, Any]) -> str:
                 table_type,
                 str(province),
                 str(year),
+                str(exam_type),
+                *([str(clean_value(row.get("department_code")))] if clean_value(row.get("department_code")) else []),
                 *[str(value) for value in identity],
             ]
         )
     if table_type == "score_line_table":
         code = clean_value(row.get("job_code")) or ""
         if code:
-            return "|".join([table_type, str(province), str(year), str(exam_type), str(code)])
+            return "|".join([table_type, str(province), str(year), str(exam_type), *([str(clean_value(row.get("department_code")))] if clean_value(row.get("department_code")) else []), str(code)])
         return "|".join(
             [
                 table_type,
@@ -470,7 +498,7 @@ def build_row_key(table_type: str, row: dict[str, Any]) -> str:
     if table_type in JOB_LIKE_TABLES:
         code = clean_value(row.get("job_code")) or ""
         if code:
-            return "|".join([table_type, str(province), str(year), str(exam_type), str(code)])
+            return "|".join([table_type, str(province), str(year), str(exam_type), *([str(clean_value(row.get("department_code")))] if clean_value(row.get("department_code")) else []), str(code)])
         return "|".join(
             [
                 table_type,

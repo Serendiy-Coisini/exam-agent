@@ -27,6 +27,7 @@ class UserProfilePayload(BaseModel):
     graduation_year: Optional[int] = Field(None, ge=1950, le=2100)
     is_fresh_graduate: Optional[bool] = None
     political_status: Optional[str] = Field(None, max_length=80)
+    grassroots_years: Optional[float] = Field(None, ge=0, le=60)
     target_region: Optional[str] = Field(None, max_length=160)
     target_exam_type: Optional[str] = Field(None, max_length=80)
     target_job_type: Optional[str] = Field(None, max_length=120)

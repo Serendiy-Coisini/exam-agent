@@ -14,6 +14,8 @@ COMMON_FIELD_LABELS = {
     "province": "省份",
     "region": "地区",
     "exam_type": "考试类型",
+    "department_code": "部门代码",
+    "department_name": "部门名称",
     "job_code": "职位代码",
     "job_name": "岗位名称",
     "unit_name": "招录单位",

@@ -197,7 +197,7 @@
                             <div class="stat-grid compact">
                                 <div><strong id="overviewJobProvinceCount">--</strong><span>职位表地区</span></div>
                                 <div><strong id="overviewScoreProvinceCount">--</strong><span>分数线地区</span></div>
-                                <div><strong id="overviewYear">2025</strong><span>默认年份</span></div>
+                                <div><strong id="overviewYear">2025</strong><span>最新数据年份</span></div>
                                 <div><strong id="overviewDataStatus">读取中</strong><span>数据状态</span></div>
                             </div>
                             <p id="overviewCoverageNote" class="surface-description coverage-description">正在读取当前数据覆盖情况…</p>
@@ -254,7 +254,11 @@
                                     <select id="analystRegion"></select>
                                 </label>
                                 <label>城市
-                                    <select id="analystCity"></select>
+                                    <input id="analystCity" list="analystCitySuggestions" type="text" maxlength="80" placeholder="不限或输入城市">
+                                    <datalist id="analystCitySuggestions"></datalist>
+                                </label>
+                                <label>招考年份
+                                    <input id="analystYear" type="number" min="1900" max="2100" placeholder="最新已导入年份">
                                 </label>
                                 <label>学历
                                     <select id="analystEducation"></select>
@@ -477,7 +481,7 @@
                             <div><strong id="dataJobRecordCount">--</strong><span>岗位记录</span></div>
                             <div><strong id="dataScoreRecordCount">--</strong><span>分数记录</span></div>
                             <div><strong id="dataReviewRecordCount">--</strong><span>资格复审记录</span></div>
-                            <div><strong id="dataDefaultYear">2025</strong><span>默认年份</span></div>
+                            <div><strong id="dataDefaultYear">2025</strong><span>最新数据年份</span></div>
                         </div>
 
                         <div class="dataset-grid">
@@ -587,7 +591,7 @@
                                         </select>
                                     </label>
                                     <label>年份 year
-                                        <input id="importYear" name="year" type="number" inputmode="numeric" min="2000" max="2100" value="2025">
+                                        <input id="importYear" name="year" type="number" inputmode="numeric" min="2000" max="2100" placeholder="自动识别或手动填写">
                                     </label>
                                 </div>
                                 <p id="importAutoDetectHint" class="import-auto-detect-hint" hidden></p>
@@ -662,7 +666,17 @@
                                         <select id="profileProvince" name="province"></select>
                                     </label>
                                     <label>目标城市
-                                        <select id="profileCity" name="city"></select>
+                                        <input id="profileCity" name="city" aria-label="目标城市" list="profileCitySuggestions" type="text" maxlength="80" placeholder="输入目标城市，例如南宁">
+                                        <datalist id="profileCitySuggestions"></datalist>
+                                    </label>
+                                    <label>学位
+                                        <input id="profileDegree" name="degree" type="text" maxlength="80" placeholder="例如学士、硕士，留空则待核验">
+                                    </label>
+                                    <label>政治面貌
+                                        <input id="profilePolitical" name="political_status" type="text" maxlength="80" placeholder="例如群众、中共党员">
+                                    </label>
+                                    <label>基层工作年限
+                                        <input id="profileGrassroots" name="grassroots_years" type="number" min="0" max="60" step="0.5" placeholder="未填写">
                                     </label>
                                     <label>学历
                                         <select id="profileEducation" name="education"></select>
@@ -766,7 +780,7 @@
                         <div class="decision-progress context-data-progress">
                             <div><span>职位表地区</span><strong id="contextJobProvinceCount">--</strong></div>
                             <div><span>分数线地区</span><strong id="contextScoreProvinceCount">--</strong></div>
-                            <div><span>默认年份</span><strong id="contextDataYear">2025</strong></div>
+                            <div><span>最新数据年份</span><strong id="contextDataYear">2025</strong></div>
                         </div>
                         <p id="contextDataSummary">正在读取当前数据覆盖情况…</p>
                     </div>
@@ -887,6 +901,6 @@
     </dialog>
 
     <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
-    <script src="/static/app.js?v=20260621-import-workbench"></script>
+    <script src="/static/app.js?v=20261013-national-import-final"></script>
 </body>
 </html>

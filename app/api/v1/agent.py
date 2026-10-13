@@ -5,11 +5,12 @@ import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from starlette.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
 from app.agents.exam_agent import analyze_exam_request
-from app.api.dependencies import get_optional_agent_user
+from app.api.dependencies import get_current_user, get_optional_agent_user
 from app.db import repositories
 from app.schemas.agent_schema import AgentAnalyzeRequest, AgentAnalyzeResponse
 from app.services.product_service import (
@@ -18,11 +19,19 @@ from app.services.product_service import (
     build_assistant_metadata,
     model_dump,
 )
+from app.core.config import settings
+from app.services.llm_service import inference_budget
 from app.tools.data_catalog import get_data_catalog, search_score_catalog
 from app.tools.region_resolver import get_region_options
 
 
-router = APIRouter(prefix="/agent", tags=["agent"])
+def _run_analysis(payload):
+    with inference_budget(settings.LLM_ANALYSIS_BUDGET_SECONDS):
+        return analyze_exam_request(payload)
+
+
+
+router = APIRouter(prefix="/agent", tags=["agent"], dependencies=[Depends(get_current_user)])
 logger = logging.getLogger(__name__)
 
 
@@ -112,7 +121,7 @@ async def analyze_agent(request: Request) -> AgentAnalyzeResponse:
         user_id,
         session_id,
     )
-    response = analyze_exam_request(payload)
+    response = await run_in_threadpool(_run_analysis, payload)
     latency_ms = int((time.perf_counter() - started_at) * 1000)
 
     if should_save_messages and session_id:

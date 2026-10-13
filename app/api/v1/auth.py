@@ -54,7 +54,7 @@ def logout_account(user: dict = Depends(get_current_user)) -> dict:
 
 @router.post("/dev-login")
 def login_with_dev_account(payload: DevLoginRequest) -> dict:
-    if not settings.DEV_LOGIN_ENABLED:
+    if settings.AUTH_ENABLED or not settings.DEV_LOGIN_ENABLED:
         raise HTTPException(status_code=403, detail="开发登录未启用")
     try:
         user = dev_login(payload.username, payload.nickname)

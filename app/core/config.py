@@ -51,6 +51,8 @@ class Settings:
         self.LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
         self.LLM_API_KEY = os.getenv("LLM_API_KEY", "")
         self.LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "")
+        self.LLM_TIMEOUT_SECONDS = min(120.0, _env_float("LLM_TIMEOUT_SECONDS", 30.0, 0.1))
+        self.LLM_ANALYSIS_BUDGET_SECONDS = min(300.0, _env_float("LLM_ANALYSIS_BUDGET_SECONDS", 90.0, 0.1))
         self.DATABASE_URL = os.getenv(
             "DATABASE_URL",
             "sqlite:///data/exam_agent.db",
@@ -67,7 +69,7 @@ class Settings:
             5,
             525600,
         )
-        self.DEV_LOGIN_ENABLED = _env_bool("DEV_LOGIN_ENABLED", True)
+        self.DEV_LOGIN_ENABLED = _env_bool("DEV_LOGIN_ENABLED", False)
         self.DEFAULT_DEV_USERNAME = os.getenv(
             "DEFAULT_DEV_USERNAME",
             "anonymous_dev",

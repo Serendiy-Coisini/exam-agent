@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.db.import_repository import list_imported_dataset_summaries, list_imported_jobs
 from app.tools.province_registry import (
+    PROVINCE_NAME_BY_SLUG,
     detect_province_in_text,
     get_province_name,
     get_province_slug,
@@ -98,7 +99,7 @@ def get_region_options(province: str = UNLIMITED_OPTION) -> dict:
 
 
 def list_region_provinces() -> list[str]:
-    provinces = [UNLIMITED_OPTION]
+    provinces = [UNLIMITED_OPTION, *PROVINCE_NAME_BY_SLUG.values()]
     for province in list_available_job_provinces():
         if province and province not in provinces:
             provinces.append(province)

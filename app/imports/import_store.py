@@ -75,7 +75,7 @@ def confirm_task(task_id: str) -> dict[str, Any]:
         return result
 
     previous_inserted = int(task.get("inserted_count") or task.get("inserted_rows") or 0)
-    if task.get("status") in {"IMPORTED", "PARTIAL_IMPORTED"} and previous_inserted > 0:
+    if task.get("status") in {"IMPORTED", "PARTIAL_IMPORTED"} and (previous_inserted + int(task.get("updated_count") or 0) + int(task.get("skipped_count") or 0)) > 0:
         return _stored_confirmation_result(task)
 
     blocking_reasons = [
@@ -117,6 +117,23 @@ def confirm_task(task_id: str) -> dict[str, Any]:
     )
     _save_confirmation_result(task, result)
     return result
+
+
+def remove_task_files(task_id: str) -> None:
+    """Remove only this task's owned files; never follow a supplied outside path."""
+    path = task_path(task_id)
+    upload = None
+    if path.exists():
+        try:
+            task = json.loads(path.read_text(encoding="utf-8"))
+            upload = Path(str(task.get("upload_path") or ""))
+        except (ValueError, OSError):
+            pass
+    if upload and not upload.is_symlink():
+        owned_dir = IMPORT_TASK_DIR.resolve()
+        if upload.resolve().parent == owned_dir and upload.name.startswith(task_id + "_"):
+            upload.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
 
 
 def task_path(task_id: str) -> Path:

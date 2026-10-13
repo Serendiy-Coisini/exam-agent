@@ -434,7 +434,7 @@ raw_row_json
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/hf007019-lgtm/exam-agent.git
+git clone https://github.com/Serendiy-Coisini/exam-agent.git
 cd exam-agent
 ```
 
@@ -651,3 +651,20 @@ curl -X POST "http://127.0.0.1:18100/api/v1/imports/upload" \
 ## License
 
 本项目采用 [Apache License 2.0](LICENSE) 开源许可。
+
+
+## 回归验证
+
+修复记录、行为变化和验证范围见 [2026-10-13 更新说明](docs/changes-2026-10-13.md)。
+
+```bash
+python -m unittest discover -s tests -v
+node --check app/static/app.js
+node --test tests/frontend.test.cjs
+```
+
+测试使用临时数据库和虚构资料，不读取正式业务数据，也不调用外部模型。GitHub Actions 对推送和 Pull Request 自动执行上述检查。
+
+首次画像填写不再要求先导入职位表；目标城市可直接输入。推荐年份留空时使用各省份/考试最新已导入年份，也可指定历史年份。学位、政治面貌及基层年限可在画像填写；未知或复杂资格要求明确列为待核验。
+
+启用 `AUTH_ENABLED=true` 后，导入和 Agent 接口需要登录。导入数据属于登录用户共享的工作区；当前版本未实现租户级数据隔离。开发登录默认关闭，正式认证模式始终禁止开发登录。

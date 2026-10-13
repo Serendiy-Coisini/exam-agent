@@ -1,3 +1,4 @@
+const ALL_PROVINCES = "北京 天津 河北 山西 内蒙古 辽宁 吉林 黑龙江 上海 江苏 浙江 安徽 福建 江西 山东 河南 湖北 湖南 广东 广西 海南 重庆 四川 贵州 云南 西藏 陕西 甘肃 青海 宁夏 新疆".split(" ");
 const API_URL = "/api/v1/agent/analyze";
 const OPTIONS_API_URL = "/api/v1/agent/options";
 const DATA_CATALOG_API_URL = "/api/v1/agent/data-catalog";
@@ -22,7 +23,7 @@ const ANALYSIS_HISTORY_LIMIT = 200;
 const ANALYSIS_DISCLAIMER_TEXT = "数据来源与 AI 分析仅供参考，岗位资格、分数线、招录条件以官方公告、职位表和招录单位解释为准。AI 可能存在理解偏差，请在报名前自行核对原始公告。";
 const PROFILE_UNSET_OPTION = "未填写";
 const PROFILE_CORE_FIELDS = ["province", "exam_type", "education", "major", "identity"];
-const PROFILE_TRACKED_FIELDS = [...PROFILE_CORE_FIELDS, "city", "accept_relocation"];
+const PROFILE_TRACKED_FIELDS = [...PROFILE_CORE_FIELDS, "city", "accept_relocation", "degree", "political_status", "grassroots_years"];
 const PROFILE_FIELD_LABELS = {
     province: "省份",
     exam_type: "考试类型",
@@ -1190,6 +1191,7 @@ async function handleDevLoginSubmit(event) {
         const me = await apiFetch(AUTH_ME_API_URL);
         currentUser = me?.user || currentUser;
         applyServerProfile(me?.profile);
+        await Promise.all([loadAllFilterOptions(), loadDataCatalog()]);
         renderAccountState();
         document.getElementById("authDialog")?.close();
         await restoreActiveSessionMessages({ silent: true, navigate: false });
@@ -1212,6 +1214,9 @@ function applyServerProfile(profile) {
         exam_type: profile.exam_type || profile.target_exam_type || "",
         province: profile.province || "",
         city: profile.city || "",
+        degree: profile.degree || "",
+        political_status: profile.political_status || "",
+        grassroots_years: profile.grassroots_years ?? "",
         education: profile.education || profile.education_level || "",
         major: profile.major || "",
         identity: profile.identity || (profile.is_fresh_graduate ? "应届生" : ""),
@@ -1646,7 +1651,7 @@ async function loadAllFilterOptions() {
     } catch (error) {
         showToast(`筛选项加载失败：${getErrorText(error)}`, "error");
         populateBaseOptions({
-            provinces: ["不限", userProfile.province],
+            provinces: ["不限", ...ALL_PROVINCES, userProfile.province],
             cities: ["不限", userProfile.city],
             educations: ["不限", "大专", "本科", "硕士", "博士"],
             identities: ["不限", "应届生", "服务基层项目人员", "退役大学生士兵", "普通人员"]
@@ -1655,7 +1660,7 @@ async function loadAllFilterOptions() {
 }
 
 async function fetchOptions(province = "不限") {
-    const response = await fetch(`${OPTIONS_API_URL}?province=${encodeURIComponent(province || "不限")}`);
+    const response = await fetch(`${OPTIONS_API_URL}?province=${encodeURIComponent(province || "不限")}`, { headers: authToken ? { Authorization: `Bearer ${authToken}` } : {} });
     if (!response.ok) {
         throw new Error(await readResponseError(response));
     }
@@ -1663,7 +1668,7 @@ async function fetchOptions(province = "不限") {
 }
 
 function populateBaseOptions(options) {
-    const provinces = uniqueValues(["不限", ...normalizeArray(options?.provinces)]);
+    const provinces = uniqueValues(["不限", ...ALL_PROVINCES, ...normalizeArray(options?.provinces)]);
     const cities = uniqueValues(["不限", userProfile.city, ...normalizeArray(options?.cities)]);
     const educations = uniqueValues(["不限", ...normalizeArray(options?.educations)]);
     const identities = uniqueValues(["不限", ...normalizeArray(options?.identities)]);
@@ -1691,6 +1696,10 @@ function populateSelect(id, values, selectedValue) {
     if (!select) {
         return;
     }
+    if (select.tagName === "INPUT") {
+        populateCityInput(id, values, selectedValue);
+        return;
+    }
     const safeValues = uniqueValues(values.filter(Boolean));
     if (selectedValue && !safeValues.includes(selectedValue)) {
         safeValues.push(selectedValue);
@@ -1701,6 +1710,16 @@ function populateSelect(id, values, selectedValue) {
         select.value = safeValues.includes(selectedValue) ? selectedValue : safeValues[0];
     }
     refreshCustomSelect(select);
+}
+
+function populateCityInput(id, values, selectedValue) {
+    const input = document.getElementById(id);
+    const suggestions = document.getElementById(`${id}Suggestions`);
+    if (!input || !suggestions) return;
+    suggestions.innerHTML = "";
+    uniqueValues(values.filter(value => value && value !== "未填写"))
+        .forEach(value => suggestions.appendChild(createOption(value)));
+    input.value = selectedValue === "未填写" ? "" : (selectedValue || "");
 }
 
 function createOption(value, label = value, selected = false) {
@@ -1720,6 +1739,8 @@ async function handleProfileProvinceChange(event) {
     const province = event.target.value === PROFILE_UNSET_OPTION ? "不限" : event.target.value;
     try {
         const options = await fetchOptions(province);
+        const currentProvince = getValue("profileProvince");
+        if ((currentProvince === PROFILE_UNSET_OPTION ? "不限" : currentProvince) !== province) return;
         populateSelect(
             "profileCity",
             [PROFILE_UNSET_OPTION, "不限", ...normalizeArray(options?.cities)],
@@ -1744,7 +1765,7 @@ async function loadDataCatalog() {
     setText("overviewCoverageNote", "正在读取当前数据覆盖情况…");
     renderDatasetLoadingState();
     try {
-        const response = await fetch(DATA_CATALOG_API_URL);
+        const response = await fetch(DATA_CATALOG_API_URL, { headers: authToken ? { Authorization: `Bearer ${authToken}` } : {} });
         if (!response.ok) {
             throw new Error(await readResponseError(response));
         }
@@ -1785,7 +1806,7 @@ function renderCoverageSurfaces() {
     setText("sidebarDataYear", dataCatalog.default_year || 2025);
     setText(
         "contextDataSummary",
-        `已导入 ${jobProvinceCount} 个职位表地区和 ${scoreProvinceCount} 个分数线地区，默认展示 ${dataCatalog.default_year || 2025} 年数据。`
+        `已导入 ${jobProvinceCount} 个职位表地区和 ${scoreProvinceCount} 个分数线地区，最新数据年份为 ${dataCatalog.default_year || 2025} 年。`
     );
 }
 
@@ -2010,6 +2031,10 @@ function isValidCatalogYear(value) {
 
 function renderProfileForm() {
     setValue("profileExamType", userProfile.exam_type || "");
+    setValue("profileCity", userProfile.city || "");
+    setValue("profileDegree", userProfile.degree || "");
+    setValue("profilePolitical", userProfile.political_status || "");
+    setValue("profileGrassroots", userProfile.grassroots_years ?? "");
     setValue("profileMajor", userProfile.major);
     setValue("profileRelocation", userProfile.accept_relocation);
     document.querySelectorAll('input[name="preferences"]').forEach((input) => {
@@ -2058,6 +2083,9 @@ async function handleProfileSubmit(event) {
         exam_type: readProfileFormValue("profileExamType"),
         province: readProfileFormValue("profileProvince"),
         city: readProfileFormValue("profileCity"),
+        degree: getValue("profileDegree"),
+        political_status: getValue("profilePolitical"),
+        grassroots_years: getValue("profileGrassroots"),
         education: readProfileFormValue("profileEducation"),
         major: getValue("profileMajor"),
         identity: readProfileFormValue("profileIdentity"),
@@ -2086,6 +2114,9 @@ async function handleProfileSubmit(event) {
         const data = await apiFetch(USER_PROFILE_API_URL, {
             method: "PUT",
             body: JSON.stringify({
+                degree: userProfile.degree,
+                political_status: userProfile.political_status,
+                grassroots_years: userProfile.grassroots_years === "" ? null : Number(userProfile.grassroots_years),
                 education_level: userProfile.education,
                 major: userProfile.major,
                 is_fresh_graduate: userProfile.identity.includes("应届"),
@@ -2210,7 +2241,7 @@ function getProfileState(profile) {
 }
 
 function isProfileFieldFilled(profile, field) {
-    const text = String(profile?.[field] || "").trim();
+    const text = String(profile?.[field] ?? "").trim();
     if (!text || ["未设置", PROFILE_UNSET_OPTION, "请选择"].includes(text)) {
         return false;
     }
@@ -2230,7 +2261,7 @@ function formatProfileValue(value) {
 }
 
 function formatProfileFieldValue(profile, field) {
-    return isProfileFieldFilled(profile, field) ? String(profile?.[field] || "").trim() : "未填写";
+    return isProfileFieldFilled(profile, field) ? String(profile?.[field] ?? "").trim() : "未填写";
 }
 
 function buildProfileSummary(profile) {
@@ -2501,6 +2532,7 @@ function buildAnalystPayload(question) {
         major: selectedFilters.major || "不限",
         identity: selectedFilters.identity || "不限",
         question,
+        year: getValue("analystYear") ? Number(getValue("analystYear")) : null,
         result_limit: inferResultLimit(question),
         session_id: activeSessionId,
         save_history: Boolean(currentUser && authToken),
@@ -2518,6 +2550,7 @@ function buildAnalystPayload(question) {
 function buildCurrentJobPayload(rawJob) {
     const job = normalizeJob(rawJob);
     return {
+        department_code: job.department_code || "",
         position_code: job.position_code,
         job_title: job.position_name,
         department: job.department,
@@ -3711,6 +3744,7 @@ function normalizeJob(job) {
         raw_position_code: String(job?.raw_position_code || job?.position_code || "").trim(),
         score_match_position_code: normalizePositionCode(job?.score_match_position_code || ""),
         matched_position_code: normalizePositionCode(job?.matched_position_code || ""),
+        department_code: String(job?.department_code || "").trim(),
         department: String(job?.department || job?.unit || "").trim(),
         unit: String(job?.unit || "").trim(),
         unit_name: String(job?.unit_name || job?.unit || job?.department || "").trim(),
@@ -4714,7 +4748,7 @@ function getJobKey(job) {
     return [
         normalized.province || "unknown",
         normalized.year || 2025,
-        getDisplayPositionCode(normalized) || `${normalized.department}-${normalized.position_name}`
+        (normalized.department_code ? `${normalized.department_code}:` : "") + (getDisplayPositionCode(normalized) || `${normalized.department}-${normalized.position_name}`)
     ].join("|");
 }
 
@@ -4796,7 +4830,7 @@ function inferImportMetaFromFileName(fileName) {
     const lowerName = rawName.toLowerCase();
     const compactLowerName = compactName.toLowerCase();
     return {
-        province: detectImportProvince(`${compactName} ${rawName}`),
+        province: /国考|国家公务员|中央机关|中央国家机关/.test(rawName) ? "全国" : detectImportProvince(`${compactName} ${rawName}`),
         exam_type: detectImportExamType(`${compactLowerName} ${lowerName}`),
         year: detectImportYear(rawName)
     };
@@ -5004,12 +5038,13 @@ async function handleImportConfirm() {
         renderImportConfirmResult(result);
         const insertedCount = Number(result?.inserted_count ?? result?.inserted_rows ?? 0);
         const skippedCount = Number(result?.skipped_count ?? result?.skipped_rows ?? 0);
-        const isImported = result?.status === "IMPORTED" && insertedCount > 0;
-        const isPartial = result?.status === "PARTIAL_IMPORTED" && insertedCount > 0;
+        const updatedCount = Number(result?.updated_count || 0);
+        const isImported = result?.status === "IMPORTED";
+        const isPartial = result?.status === "PARTIAL_IMPORTED";
         if (isImported || isPartial) {
             const message = isPartial
-                ? `部分入库成功：成功 ${formatNumber(insertedCount)} 条，跳过 ${formatNumber(skippedCount)} 条。`
-                : `入库完成：成功写入 ${formatNumber(insertedCount)} 条，跳过 ${formatNumber(skippedCount)} 条。`;
+                ? `部分入库成功：新增 ${formatNumber(insertedCount)} 条，更新 ${formatNumber(updatedCount)} 条，跳过 ${formatNumber(skippedCount)} 条。`
+                : `入库完成：新增 ${formatNumber(insertedCount)} 条，更新 ${formatNumber(updatedCount)} 条，跳过 ${formatNumber(skippedCount)} 条。`;
             renderImportStatus(message, isPartial ? "warning" : "success");
             showToast(message, isPartial ? "warning" : "success");
             window.dispatchEvent(new CustomEvent("import:confirmed", { detail: result }));
@@ -5709,7 +5744,7 @@ function renderImportConfirmResult(result) {
     }
     section.hidden = false;
     const insertedCount = Number(result?.inserted_count ?? result?.inserted_rows ?? 0);
-    const imported = insertedCount > 0 && ["IMPORTED", "PARTIAL_IMPORTED"].includes(result?.status);
+    const imported = ["IMPORTED", "PARTIAL_IMPORTED"].includes(result?.status);
     const outputResults = normalizeArray(result?.output_results);
     const items = [
         ["status", result?.status || "--"],
@@ -5849,7 +5884,7 @@ async function searchScoreReferences() {
     });
 
     try {
-        const response = await fetch(`${SCORE_REFERENCES_API_URL}?${params.toString()}`);
+        const response = await fetch(`${SCORE_REFERENCES_API_URL}?${params.toString()}`, { headers: authToken ? { Authorization: `Bearer ${authToken}` } : {} });
         if (!response.ok) {
             throw new Error(await readResponseError(response));
         }

@@ -153,11 +153,15 @@ def find_single_score_reference(
     region: str,
     query: str,
     city: str = "",
+    year: int | None = None,
+    department_code: str = "",
 ) -> dict:
     """按单岗位查询语义定位一条分数线记录。"""
     scoped_scores = [
         score
         for score in _read_scores(region=region)
+        if year is None or _optional_int(score.get("year")) == year
+        if not department_code or str(score.get("department_code") or "") == department_code
         if _is_min_score_reference(score)
         if _match_single_score_scope(
             score=score,
@@ -177,6 +181,11 @@ def find_single_score_reference(
             if _normalize_position_code(score.get("position_code")) == requested_code
         ]
         if code_matches:
+            if year is None:
+                latest = max(int(score.get("year") or 0) for score in code_matches)
+                code_matches = [score for score in code_matches if int(score.get("year") or 0) == latest]
+            if len(code_matches) != 1:
+                return _single_score_ambiguous()
             return _single_score_found(code_matches[0], "code_exact")
         return {
             "status": "not_found",
@@ -263,9 +272,7 @@ def attach_scores_to_jobs(matched_jobs: list[dict], score_references: list[dict]
             job["avg_score"] = avg_score
         if score.get("interview_count") is not None:
             job["interview_count"] = score["interview_count"]
-        if score.get("recruit_count") is not None:
-            job["recruit_count"] = score["recruit_count"]
-            job["headcount"] = score["recruit_count"]
+        # Current recruitment counts belong to the job table, not the score source.
         job["score_source_type"] = "score_line"
         if score.get("data_status"):
             job["score_data_status"] = score["data_status"]
@@ -675,9 +682,10 @@ def _normalize_imported_score_line(row: dict) -> dict:
     defaults = _score_defaults(province=province, year=year)
     return _normalize_score_row(
         row={
+            "department_code": row.get("department_code") or "",
             "score_id": f"db-score-line-{row.get('id')}",
             "year": year,
-            "target": "公务员",
+            "target": "事业单位" if "事业" in str(row.get("exam_type") or "") else "公务员",
             "exam_type": _imported_tool_exam_type(row.get("exam_type")),
             "region": province,
             "city": row.get("region") or "",
@@ -715,7 +723,7 @@ def _normalize_imported_candidate_score(row: dict) -> dict:
         row={
             "score_id": f"db-candidate-score-{row.get('id')}",
             "year": year,
-            "target": "公务员",
+            "target": "事业单位" if "事业" in str(row.get("exam_type") or "") else "公务员",
             "exam_type": _imported_tool_exam_type(row.get("exam_type")),
             "region": province,
             "city": row.get("region") or "",
@@ -991,6 +999,12 @@ def _is_information_technology_major(major: str) -> bool:
 
 
 def _same_scope(job: dict, score: dict) -> bool:
+    department_code = str(job.get("department_code") or "")
+    if department_code != str(score.get("department_code") or ""):
+        return False
+    job_year, score_year = _optional_int(job.get("year")), _optional_int(score.get("year"))
+    if not job_year or not score_year or job_year != score_year:
+        return False
     if not _match_target(job.get("target", ""), score.get("target", "")):
         return False
     if _requires_exam_type_filter(job.get("target", "")) and (

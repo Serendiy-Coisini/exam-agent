@@ -108,6 +108,9 @@ def login_user(username: str, password: str) -> dict[str, Any]:
 
 def dev_login(username: str, nickname: str = "") -> dict[str, Any]:
     clean_username = _validate_username(username)
+    existing = repositories.get_auth_user_by_username(clean_username)
+    if existing and (existing.get("password_hash") or existing.get("status") != "active" or existing.get("is_active") is False):
+        raise ValueError("该账号不能使用开发登录，请使用密码登录")
     return repositories.upsert_dev_user(clean_username, nickname)
 
 

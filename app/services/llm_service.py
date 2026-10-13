@@ -1,4 +1,19 @@
 import json
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+_ANALYSIS_DEADLINE = ContextVar("analysis_deadline", default=None)
+
+
+@contextmanager
+def inference_budget(seconds):
+    token = _ANALYSIS_DEADLINE.set(time.monotonic() + seconds)
+    try:
+        yield
+    finally:
+        _ANALYSIS_DEADLINE.reset(token)
+
 
 from app.core.config import settings
 
@@ -130,7 +145,13 @@ def generate_llm_summary(prompt: str, fallback_report: str) -> dict:
 
 def _build_client(openai_class):
     """Create an OpenAI-compatible SDK client."""
-    client_kwargs = {"api_key": settings.LLM_API_KEY}
+    timeout = settings.LLM_TIMEOUT_SECONDS
+    deadline = _ANALYSIS_DEADLINE.get()
+    if deadline is not None:
+        timeout = min(timeout, deadline - time.monotonic())
+        if timeout <= 0:
+            raise TimeoutError("Analysis model budget exhausted")
+    client_kwargs = {"api_key": settings.LLM_API_KEY, "timeout": timeout, "max_retries": 0}
     if settings.LLM_BASE_URL:
         client_kwargs["base_url"] = settings.LLM_BASE_URL
     return openai_class(**client_kwargs)

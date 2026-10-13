@@ -12,6 +12,7 @@ from app.schemas.agent_schema import AgentAnalyzeRequest, AgentAnalyzeResponse
 from app.db.import_repository import (
     get_candidate_score_summary_by_job,
     get_review_score_summary_by_job,
+    list_imported_jobs,
 )
 from app.services.llm_service import generate_llm_chat, generate_llm_json, generate_llm_summary
 from app.tools.job_tool import extract_location_preference, find_single_job, search_jobs
@@ -543,6 +544,8 @@ def _missing_jobs_region_message(region: str, question: str = "") -> str:
     slug = requested_province.get("slug", "")
     if not slug or has_jobs_csv(slug):
         return ""
+    if list_imported_jobs(province=province, limit=1):
+        return ""
     return missing_jobs_message(province)
 
 
@@ -652,6 +655,7 @@ def _attach_score_samples_to_jobs(
             job_code=position_code,
             job_name=job_name,
             unit_name=unit_name,
+            department_code=str(job.get("department_code") or ""),
         )
         if _has_score_sample(review_summary):
             _apply_review_score_sample(job, review_summary)
@@ -664,6 +668,7 @@ def _attach_score_samples_to_jobs(
             job_code=position_code,
             job_name=job_name,
             unit_name=unit_name,
+            department_code=str(job.get("department_code") or ""),
         )
         if _has_score_sample(candidate_summary):
             _apply_candidate_score_sample(job, candidate_summary)
@@ -1452,6 +1457,8 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
         identity=payload.identity,
         question=payload.question,
         limit=result_limit,
+        year=payload.year,
+        profile=payload.profile,
     )
     _add_trace(
         trace=trace,
@@ -1829,7 +1836,8 @@ def _build_current_job_record(payload: AgentAnalyzeRequest, current_job: dict) -
     elif not score_match_reason:
         score_match_reason = "当前分数为历史参考，非该岗位职位代码精确匹配"
     result = {
-        "job_id": position_code or "current-job-context",
+        "job_id": f"{current_job['department_code']}-{position_code}" if current_job.get("department_code") else (position_code or "current-job-context"),
+        "department_code": current_job.get("department_code") or "",
         "year": _safe_int(current_job.get("year")) or 2025,
         "target": payload.target,
         "exam_type": current_job.get("exam_type") or payload.exam_type,
@@ -2070,6 +2078,7 @@ def _analyze_single_job_request(
         region=payload.region,
         city=payload.city,
         query=payload.question,
+        year=payload.year,
     )
     _add_trace(
         trace=trace,
@@ -2089,12 +2098,15 @@ def _analyze_single_job_request(
         output_summary=_build_single_lookup_trace_summary(job_lookup, "职位表"),
     )
 
+    score_year = payload.year or (job_lookup.get("job") or {}).get("year")
     score_lookup = find_single_score_reference(
         target=payload.target,
         exam_type=payload.exam_type,
         region=payload.region,
         city=payload.city,
         query=payload.question,
+        year=score_year,
+        department_code=str((job_lookup.get("job") or {}).get("department_code") or ""),
     )
     _add_trace(
         trace=trace,
@@ -2735,7 +2747,7 @@ def _single_score_references_for_job(
         score = score_lookup["score"]
         job_code = _job_position_code(job)
         score_code = _normalize_position_code(score.get("position_code"))
-        if not job_code or not score_code or job_code == score_code:
+        if (not job_code or not score_code or job_code == score_code) and str(job.get("department_code") or "") == str(score.get("department_code") or "") and _safe_int(job.get("year")) == _safe_int(score.get("year")):
             return [score]
 
     job_code = _job_position_code(job)

@@ -66,7 +66,7 @@ def get_data_catalog() -> dict[str, Any]:
         }
     )
     return {
-        "default_year": DEFAULT_DATA_YEAR,
+        "default_year": max((int(item.get("year") or 0) for item in (job_datasets or database_datasets)), default=DEFAULT_DATA_YEAR),
         "province_count": len(provinces),
         "job_dataset_count": len(job_datasets),
         "job_record_count": sum(item["record_count"] for item in job_datasets),

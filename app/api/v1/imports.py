@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+
+from app.api.dependencies import get_current_user
+from starlette.concurrency import run_in_threadpool
 
 from app.schemas.imports import (
     DatasetRowsResponse,
@@ -15,6 +18,7 @@ from app.schemas.imports import (
     ImportTemplateSaveResponse,
 )
 from app.services.import_service import (
+    MAX_UPLOAD_BYTES,
     confirm_import_task,
     delete_import_dataset,
     delete_import_task,
@@ -28,7 +32,7 @@ from app.services.import_service import (
 )
 
 
-router = APIRouter(prefix="/imports", tags=["imports"])
+router = APIRouter(prefix="/imports", tags=["imports"], dependencies=[Depends(get_current_user)])
 
 
 @router.post("/upload", response_model=ImportPreviewResponse)
@@ -40,8 +44,11 @@ async def upload_import_file(
 ) -> dict:
     """Upload a CSV/Excel file and return a cleaned preview."""
     try:
-        content = await file.read()
-        task = process_uploaded_file(
+        content = await file.read(MAX_UPLOAD_BYTES + 1)
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="上传文件超过 20MB 限制")
+        task = await run_in_threadpool(
+            process_uploaded_file,
             file_name=file.filename or "upload",
             content=content,
             province=province,

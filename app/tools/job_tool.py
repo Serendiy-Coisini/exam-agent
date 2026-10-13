@@ -3,7 +3,7 @@ import re
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from app.db.import_repository import list_imported_jobs, list_imported_signup_stats
+from app.db.import_repository import list_imported_jobs, list_imported_signup_stats, list_imported_major_catalog
 from app.tools.region_resolver import (
     canonical_province,
     infer_job_region,
@@ -139,12 +139,15 @@ def search_jobs(
     question: str = "",
     top_n: int = MAX_RECOMMENDATIONS,
     limit: int | None = None,
+    year: int | None = None,
+    profile: dict | None = None,
 ) -> list[dict]:
     """先执行硬性条件过滤，再为候选岗位评分并返回 Top N 推荐。"""
     recommendations: list[dict] = []
+    categories_by_scope: dict[tuple, list[str]] = {}
     requested_province = resolve_requested_province(region=region, question=question)
     effective_region = requested_province.get("province") or region
-    source_jobs = _read_jobs(region=region, question=question)
+    source_jobs = _read_jobs(region=region, question=question, year=year)
     if not source_jobs:
         return [
             _missing_jobs_result(
@@ -160,6 +163,12 @@ def search_jobs(
         region=effective_region,
     )
 
+    if year is None:
+        latest = {}
+        for row in source_jobs:
+            scope = (row.get("region"), row.get("exam_type"))
+            latest[scope] = max(latest.get(scope, 0), int(row.get("year") or 0))
+        source_jobs = [row for row in source_jobs if int(row.get("year") or 0) == latest[(row.get("region"), row.get("exam_type"))]]
     for source_job in source_jobs:
         if not _match_target(target, source_job.get("target", "")):
             continue
@@ -180,7 +189,13 @@ def search_jobs(
         if education_score == 0:
             continue
 
-        major_score = _score_major(major, source_job.get("major_required", ""))
+        catalog_scope = (source_job.get("region") or "", source_job.get("year"))
+        if catalog_scope not in categories_by_scope:
+            catalog = list_imported_major_catalog(province=catalog_scope[0], year=catalog_scope[1])
+            categories_by_scope[catalog_scope] = [row.get("major_category") for row in catalog if row.get("major_name") == major
+                          and (not row.get("degree_level") or education in str(row.get("degree_level")))]
+        categories = categories_by_scope[catalog_scope]
+        major_score = _score_major(major, source_job.get("major_required", ""), categories=categories)
         if major_score == 0:
             continue
 
@@ -191,6 +206,9 @@ def search_jobs(
         if identity_score == 0:
             continue
 
+        compatible, pending = _check_additional_qualifications(source_job, profile or {})
+        if not compatible:
+            continue
         job = dict(source_job)
         qualification_score = _calculate_qualification_score(
             region_score=region_score,
@@ -257,7 +275,8 @@ def search_jobs(
             region_score=region_score,
             suitability=suitability,
         )
-        job["verify_notes"] = _build_verify_notes(job)
+        job["risk_notes"].extend(pending)
+        job["verify_notes"] = _build_verify_notes(job) + pending
         job["short_reason"] = _build_short_reason(
             user_major=major,
             job=job,
@@ -305,11 +324,12 @@ def find_single_job(
     region: str,
     query: str,
     city: str = "",
+    year: int | None = None,
 ) -> dict:
     """按用户输入定位单个已知岗位，不做学历、专业、身份过滤。"""
     requested_province = resolve_requested_province(region=region, question=query)
     effective_region = requested_province.get("province") or region
-    source_jobs = _read_jobs(region=region, question=query)
+    source_jobs = _read_jobs(region=region, question=query, year=year)
     if not source_jobs:
         return {
             "status": "error",
@@ -344,6 +364,16 @@ def find_single_job(
             ) == requested_code
         ]
         if code_matches:
+            latest_year = max(int(job.get("year") or 0) for job in code_matches)
+            if year is None:
+                code_matches = [job for job in code_matches if int(job.get("year") or 0) == latest_year]
+            if len(code_matches) > 1:
+                narrowed = [job for job in code_matches if
+                            (job.get("department_code") and re.search(r"(?<!\d)" + re.escape(str(job["department_code"])) + r"(?!\d)", query))
+                            or any(value and str(value) in query for value in [job.get("department"), job.get("unit_name")])]
+                if len(narrowed) != 1:
+                    return _single_job_ambiguous()
+                code_matches = narrowed
             return _single_job_found(code_matches[0], "code_exact")
         return {
             "status": "not_found",
@@ -604,12 +634,13 @@ def _normalize_lookup_text(text: str) -> str:
 def _read_jobs(
     region: str = "",
     question: str = "",
-    year: int = DEFAULT_DATA_YEAR,
+    year: int | None = None,
 ) -> list[dict]:
     """Read SQLite first and use bundled CSVs only for legacy compatibility."""
     requested_province = resolve_requested_province(region=region, question=question)
     requested_slug = requested_province.get("slug", "")
-    db_jobs = _read_jobs_from_database(region=region, question=question)
+    db_jobs = _read_jobs_from_database(region=region, question=question, year=year)
+    year = year or DEFAULT_DATA_YEAR
     if requested_slug:
         if db_jobs:
             return db_jobs
@@ -649,17 +680,18 @@ def _read_jobs(
 def _read_jobs_from_database(
     region: str = "",
     question: str = "",
+    year: int | None = None,
 ) -> list[dict]:
     requested_province = resolve_requested_province(region=region, question=question)
     province = requested_province.get("province") if requested_province.get("slug") else ""
-    rows = list_imported_jobs(province=province or "", limit=100000)
+    rows = list_imported_jobs(province=province or "", year=year, limit=100000)
     signup_by_code = _imported_signup_by_code(
         list_imported_signup_stats(province=province or "", limit=100000)
     )
     return [
         _normalize_imported_job_row(
             row,
-            signup=signup_by_code.get(_normalize_position_code(row.get("job_code"))),
+            signup=signup_by_code.get(_signup_scope(row)),
         )
         for row in rows
     ]
@@ -673,16 +705,17 @@ def _normalize_imported_job_row(row: dict, signup: dict | None = None) -> dict:
     return _normalize_job_row(
         {
             "year": year,
-            "target": "公务员",
+            "target": "事业单位" if "事业" in str(row.get("exam_type") or "") else "公务员",
             "exam_type": _imported_tool_exam_type(row.get("exam_type")),
             "region": province or row.get("region"),
             "city": row.get("region") or "",
+            "department_code": row.get("department_code") or "",
             "department": row.get("department_name") or row.get("unit_name") or "",
             "unit": row.get("unit_name") or "",
             "unit_name": row.get("unit_name") or "",
             "position": row.get("job_name") or row.get("job_code") or "",
             "position_name": row.get("job_name") or row.get("job_code") or "",
-            "job_id": row.get("job_code") or "",
+            "job_id": f"{row['department_code']}-{row.get('job_code') or ''}" if row.get("department_code") else (row.get("job_code") or ""),
             "position_code": row.get("job_code") or "",
             "major_required": row.get("major_requirement") or "",
             "degree_requirement": row.get("degree_requirement") or "",
@@ -732,12 +765,18 @@ def _database_source_label(value) -> str:
     return "导入数据库"
 
 
-def _imported_signup_by_code(rows: list[dict]) -> dict[str, dict]:
-    indexed: dict[str, dict] = {}
+def _signup_scope(row: dict) -> tuple:
+    return (canonical_province(str(row.get("province") or row.get("region") or "")),
+            _optional_int(row.get("year")), _imported_tool_exam_type(row.get("exam_type")),
+            _normalize_position_code(row.get("job_code")), str(row.get("department_code") or ""))
+
+
+def _imported_signup_by_code(rows: list[dict]) -> dict[tuple, dict]:
+    indexed = {}
     for row in rows:
-        code = _normalize_position_code(row.get("job_code"))
-        if code and code not in indexed:
-            indexed[code] = row
+        key = _signup_scope(row)
+        if key[-2] and key not in indexed:
+            indexed[key] = row
     return indexed
 
 
@@ -1134,16 +1173,19 @@ def _score_region(user_region: str, job_region: str) -> int:
 
 
 def _score_education(user_education: str, required_education: str) -> int:
-    """学历满足岗位要求得 15 分，不满足时作为硬性条件淘汰。"""
+    """Distinguish enumerated qualifications from minimum-level requirements."""
     if _is_unlimited_filter(user_education):
         return 15
-    required_education = _normalize_text(required_education)
-    if "不限" in required_education:
+    required = _normalize_text(required_education)
+    if not required or "不限" in required:
         return 15
-
-    user_level = _education_level(user_education)
-    required_level = _education_level(required_education)
-    return 15 if user_level and user_level >= required_level else 0
+    level = _education_level(user_education)
+    levels = {_education_level(token) for token in re.split(r"[、，,;/或及和\s]+", required) if _education_level(token)}
+    if "研究生" in required and "硕士" not in required and "博士" not in required:
+        levels.update({40, 50})
+    if re.search(r"以上|及以上|不低于", required):
+        return 15 if level and levels and level >= min(levels) else 0
+    return 15 if level and level in levels else 0
 
 
 def _education_level(text: str) -> int:
@@ -1162,19 +1204,21 @@ def _education_level(text: str) -> int:
     return 0
 
 
-def _score_major(user_major: str, required_major: str) -> int:
+def _score_major(user_major: str, required_major: str, *, categories=()) -> int:
     """专业完全一致 40 分、相关大类 30 分、专业不限 20 分。"""
     user_major = _normalize_text(user_major)
     required_major = _normalize_text(required_major)
 
-    if not user_major or not required_major:
-        return 0
     if "不限" in required_major or required_major == "专业不限":
         return 20
+    if not user_major or not required_major:
+        return 0
     if user_major == required_major or user_major in required_major:
         return 40
     if required_major in user_major and len(required_major) >= 4:
         return 40
+    if any(category and category in required_major for category in categories):
+        return 30
     if _is_related_major(user_major, required_major):
         return 30
     return 0
@@ -1196,6 +1240,51 @@ def _score_identity(user_identity: str, required_identity: str) -> int:
     if "往届" in user_identity and "往届" in required_identity:
         return 15
     return 0
+
+
+def _check_additional_qualifications(job: dict, profile: dict) -> tuple[bool, list[str]]:
+    pending = []
+    checks = [("degree_requirement", "degree", "学位"),
+              ("political_requirement", "political_status", "政治面貌"),
+              ("grassroots_requirement", "grassroots_years", "基层经历")]
+    for field, user_field, label in checks:
+        required = str(job.get(field) or "").strip()
+        if not required or "不限" in required or required in {"无", "无要求", "不要求"}:
+            continue
+        actual = str(profile.get(user_field) if profile.get(user_field) is not None else "").strip()
+        if not actual or actual in {"未填写", "不限"}:
+            pending.append(f"{label}待核验：岗位要求{required}，画像尚未填写。")
+            continue
+        if field == "political_requirement":
+            if "中共党员" in required:
+                accepted = actual == "中共党员" or ("预备党员" in actual and "预备党员" in required)
+                if not accepted:
+                    return False, pending
+            elif any(status in required for status in ("共青团员", "群众", "民主党派")):
+                if actual not in required:
+                    return False, pending
+            elif actual not in required:
+                pending.append(f"政治面貌待核验：{required}。")
+        elif field == "degree_requirement":
+            normalized = required.replace("学士", "本科")
+            user_degree = actual.replace("学士", "本科")
+            if _education_level(user_degree) and _education_level(normalized):
+                if not _score_education(user_degree, normalized):
+                    return False, pending
+            else:
+                pending.append(f"学位待核验：{required}。")
+        else:
+            match = re.search(r"(\d+|一|二|两|三|四|五)年", required)
+            digits = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5}
+            if match and re.fullmatch(r"\d+(?:\.\d+)?", actual):
+                minimum = digits.get(match[1], int(match[1]) if match[1].isdigit() else 0)
+                if float(actual) < minimum:
+                    return False, pending
+            else:
+                pending.append(f"基层经历待核验：{required}。")
+    if job.get("qualification_requirement"):
+        pending.append(f"资格条件待核验：{job['qualification_requirement']}。")
+    return True, pending
 
 
 def _calculate_qualification_score(

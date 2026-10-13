@@ -209,6 +209,7 @@ CREATE TABLE IF NOT EXISTS import_templates (
 );
 
 CREATE TABLE IF NOT EXISTS exam_jobs (
+    department_code TEXT NOT NULL DEFAULT '',
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     import_task_id TEXT NOT NULL DEFAULT '',
     row_key TEXT NOT NULL UNIQUE,
@@ -242,6 +243,7 @@ CREATE TABLE IF NOT EXISTS exam_jobs (
 );
 
 CREATE TABLE IF NOT EXISTS exam_score_lines (
+    department_code TEXT NOT NULL DEFAULT '',
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     import_task_id TEXT NOT NULL DEFAULT '',
     row_key TEXT NOT NULL UNIQUE,
@@ -269,6 +271,7 @@ CREATE TABLE IF NOT EXISTS exam_score_lines (
 );
 
 CREATE TABLE IF NOT EXISTS exam_candidate_scores (
+    department_code TEXT NOT NULL DEFAULT '',
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     import_task_id TEXT NOT NULL DEFAULT '',
     row_key TEXT NOT NULL UNIQUE,
@@ -304,6 +307,7 @@ CREATE TABLE IF NOT EXISTS exam_candidate_scores (
 );
 
 CREATE TABLE IF NOT EXISTS exam_review_candidates (
+    department_code TEXT NOT NULL DEFAULT '',
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     row_key TEXT NOT NULL UNIQUE,
     import_task_id TEXT NOT NULL DEFAULT '',
@@ -342,6 +346,7 @@ CREATE TABLE IF NOT EXISTS exam_review_candidates (
 );
 
 CREATE TABLE IF NOT EXISTS exam_signup_stats (
+    department_code TEXT NOT NULL DEFAULT '',
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     import_task_id TEXT NOT NULL DEFAULT '',
     row_key TEXT NOT NULL UNIQUE,
@@ -484,6 +489,8 @@ def connection() -> Iterator[sqlite3.Connection]:
 
 
 def _apply_lightweight_migrations(db: sqlite3.Connection) -> None:
+    for table in ["exam_jobs", "exam_score_lines", "exam_signup_stats", "exam_candidate_scores", "exam_review_candidates"]:
+        _ensure_column(db, table=table, column="department_code", definition="TEXT NOT NULL DEFAULT ''")
     _ensure_column(
         db,
         table="users",

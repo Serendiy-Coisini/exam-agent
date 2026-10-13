@@ -13,6 +13,7 @@ class ChatMessage(BaseModel):
 class CurrentJobContext(BaseModel):
     """Most recent job card passed by the frontend for contextual follow-up."""
 
+    department_code: str = ""
     position_code: str = ""
     job_title: str = ""
     department: str = ""
@@ -96,6 +97,7 @@ class AgentAnalyzeRequest(BaseModel):
     major: str = Field("", example="软件工程")
     identity: str = Field("不限", example="应届生")
     question: str = Field(..., example="我适合报哪些岗位方向？有什么风险？")
+    year: Optional[int] = Field(None, ge=1900, le=2100)
     result_limit: Optional[int] = Field(None, ge=1, le=5)
     messages: List[ChatMessage] = Field(default_factory=list)
     current_job: Optional[CurrentJobContext] = None
@@ -144,6 +146,7 @@ class MatchedJob(BaseModel):
     province: str = ""
     city: str = ""
     district: str = ""
+    department_code: str = ""
     position_code: str = ""
     display_position_code: str = ""
     full_position_code: str = ""
@@ -268,6 +271,7 @@ class ScoreReference(BaseModel):
     exam_type: str = ""
     region: str = ""
     city: str = ""
+    department_code: str = ""
     position_code: str = ""
     display_position_code: str = ""
     full_position_code: str = ""

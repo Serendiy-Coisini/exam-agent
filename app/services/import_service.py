@@ -28,7 +28,7 @@ from app.imports.field_mapper import (
     standard_fields_for,
 )
 from app.imports.file_reader import SUPPORTED_FILE_EXTENSIONS, RawTable, read_import_file
-from app.imports.import_store import confirm_task, load_task, save_task, save_uploaded_file
+from app.imports.import_store import confirm_task, load_task, save_task, save_uploaded_file, remove_task_files
 from app.imports.import_type_registry import (
     IMPORT_TYPE_REGISTRY,
     get_import_type,
@@ -498,6 +498,7 @@ def delete_import_task(task_id: str) -> dict[str, Any]:
     result = delete_import_task_data(task_id)
     if not result:
         raise FileNotFoundError("导入任务不存在或已被删除")
+    remove_task_files(task_id)
     return result
 
 
@@ -505,6 +506,8 @@ def delete_import_dataset(dataset_id: str) -> dict[str, Any]:
     result = delete_dataset_data(dataset_id)
     if not result:
         raise FileNotFoundError("数据集不存在或已被删除")
+    if result.get("task_id"):
+        remove_task_files(result["task_id"])
     return result
 
 
@@ -570,7 +573,18 @@ def public_preview(task: dict[str, Any]) -> dict[str, Any]:
         ]
         public_outputs.append(public_output)
     preview["outputs"] = public_outputs
-    return preview
+    return _sanitize_preview_metadata(preview)
+
+
+def _sanitize_preview_metadata(value):
+    """Warnings and nested reports share the same privacy boundary as rows."""
+    if isinstance(value, dict):
+        return {key: _sanitize_preview_metadata(item) for key, item in value.items()
+                if not is_sensitive_dataset_display_field(key)
+                and key not in {"cleaned_rows", "valid_cleaned_rows", "upload_path"}}
+    if isinstance(value, list):
+        return [_sanitize_preview_metadata(item) for item in value]
+    return value
 
 
 def _build_multi_output_import_task(
@@ -1506,6 +1520,9 @@ def _infer_import_defaults(
     warnings: list[dict[str, Any]] = []
     inferred_year = _infer_score_line_year(file_name, raw_tables) if table_type == "score_line_table" else _infer_year(text)
     selected_year = year or inferred_year
+    inferred_exam = _infer_exam_type(file_name) or _infer_exam_type(text)
+    resolved_exam = exam_type or inferred_exam
+    is_national_jobs = table_type == "job_table" and (inferred_exam == "国考" or resolved_exam == "国考")
     if table_type == "score_line_table" and inferred_year is not None:
         selected_year = inferred_year
         if year is not None and year != inferred_year:
@@ -1521,8 +1538,8 @@ def _infer_import_defaults(
             )
     return (
         {
-            "province": province or _infer_province(text),
-            "exam_type": exam_type or _infer_exam_type(text),
+            "province": "全国" if is_national_jobs else (province or _infer_province(file_name) or _infer_province(text)),
+            "exam_type": "国考" if is_national_jobs else resolved_exam,
             "year": selected_year,
         },
         warnings,
@@ -1552,6 +1569,8 @@ def _infer_province(text: str) -> str | None:
 
 
 def _infer_exam_type(text: str) -> str | None:
+    if any(keyword in text for keyword in ["国考", "国家公务员", "中央机关", "中央国家机关"]):
+        return "国考"
     if any(keyword in text for keyword in ["公务员", "市考", "省考", "国考"]):
         return "公务员"
     if "事业单位" in text:
