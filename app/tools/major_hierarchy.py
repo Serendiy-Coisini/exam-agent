@@ -75,7 +75,7 @@ def _prepare(catalog):
         for term in (code, name, code + name, name + '门类', name + '学科门类',
                      '学科门类:' + name):
             add(term, ('discipline', code))
-    return dict(codes=codes, names=names, terms=terms)
+    return dict(codes=codes, names=names, terms=terms, categories=categories, disciplines=disciplines)
 
 
 @lru_cache(maxsize=4)
@@ -199,6 +199,31 @@ def _split_terms(value):
     return parts if all(parts) else None
 
 
+def _match_major_path(level, code, entry, index, trace):
+    """Use catalog parents for every recognized term, never guessed prefixes."""
+    if level == 'discipline':
+        wanted = dict(discipline_code=code, discipline_name=index['disciplines'][code])
+    elif level == 'category':
+        name, parent = index['categories'][code]
+        wanted = dict(discipline_code=parent, discipline_name=index['disciplines'][parent],
+                      category_code=code, category_name=name)
+    else:
+        wanted = index['codes'][code]
+    steps = []
+    for label, key, name_key in [('门类', 'discipline_code', 'discipline_name'),
+                                  ('专业类', 'category_code', 'category_name'),
+                                  ('具体专业', 'code', 'name')]:
+        if not wanted.get(key):
+            continue
+        matched = entry.get(key) == wanted[key]
+        steps.append(f"{label}{'匹配' if matched else '不符合'}：{wanted[name_key]}（{wanted[key]}）")
+        if not matched:
+            trace.append(' → '.join(steps))
+            return False
+    trace.append(' → '.join(steps))
+    return True
+
+
 def _any_major_match(parsed, entry):
     decisions = [part[0](entry) for part in parsed]
     if True in decisions:
@@ -206,28 +231,34 @@ def _any_major_match(parsed, entry):
     return None if None in decisions else False
 
 
-def _intersect_major_match(outer, inner, entry, exclusion=False):
-    left, right = outer[0](entry), inner[0](entry)
+def _intersect_major_match(outer, inner, entry, exclusion=False, trace=None):
+    left = outer[0](entry)
+    if left is False:
+        return False
+    right = inner[0](entry)
     if exclusion and right is not None:
+        if trace is not None:
+            trace.append('命中排除专业范围' if right else '未命中排除专业范围')
         right = not right
     if left is False or right is False:
         return False
     return None if left is None or right is None else True
 
 
-def _parse(value, index):
+def _parse(value, index, trace=None):
     """Return a predicate and restriction levels, or fail closed on unknowns."""
+    if trace is None:
+        trace = []
     value = re.sub(r'\s+', '', value)
     direct = index['terms'].get(value)
     if direct:
         level, code = direct
-        key = {'specialty': 'code', 'category': 'category_code', 'discipline': 'discipline_code'}[level]
-        return lambda entry: entry[key] == code, {level}
+        return lambda entry: _match_major_path(level, code, entry, index, trace), {level}
     parts = _split_terms(value)
     if parts is None:
         return None
     if len(parts) > 1:
-        parsed = [_parse(part, index) for part in parts]
+        parsed = [_parse(part, index, trace) for part in parts]
         if any(part is None for part in parsed):
             return None
         return lambda entry: _any_major_match(parsed, entry), set().union(*(part[1] for part in parsed))
@@ -237,12 +268,12 @@ def _parse(value, index):
         match = re.fullmatch(r'([^()]+)\((.*)\)', value)
         if not match:
             return None
-        outer = _parse(match[1], index)
+        outer = _parse(match[1], index, trace)
         inner_text = match[2]
         exclusion = re.match(r'(不含|不包括|不包含|除外:?)', inner_text)
         if exclusion:
             inner_text = inner_text[exclusion.end():]
-        inner = _parse(inner_text, index)
+        inner = _parse(inner_text, index, trace)
         if outer is None:
             return None
         if inner is None:
@@ -254,7 +285,7 @@ def _parse(value, index):
                 return None
             return lambda entry: False if outer[0](entry) is False else None, outer[1]
         if exclusion:
-            return lambda entry: _intersect_major_match(outer, inner, entry, True), outer[1]
+            return lambda entry: _intersect_major_match(outer, inner, entry, True, trace), outer[1]
         return lambda entry: _intersect_major_match(outer, inner, entry), inner[1]
     return None
 
@@ -281,7 +312,8 @@ def check_major(job, profile, catalog=None):
         index = _prepare(catalog)
     if index is None:
         return result('pending', '本地专业目录缺失或存在歧义，须核对原始目录')
-    parsed = _parse(_text(requirement), index)
+    trace = []
+    parsed = _parse(_text(requirement), index, trace)
     if parsed is None:
         return result('pending', '专业要求包含未识别名称、代码或附加限制，须核验原文')
     levels = parsed[1]
@@ -298,7 +330,9 @@ def check_major(job, profile, catalog=None):
         if actual and actual not in {entry[key], entry[name_key], entry[key] + entry[name_key]}:
             return result('pending', '手填画像专业层级与权威目录记录不一致', level)
     matched = parsed[0](entry)
+    path = ' → '.join(filter(None, (entry['discipline_name'], entry['category_name'],
+                                    f"{entry['name']}（{entry['code']}）")))
+    reason = f"画像专业路径：{path}；逐级核验：" + '；'.join(trace)
     if matched is None:
-        return result('pending', '画像专业未与已识别的外层范围冲突，但括号内专业或附加限制仍须核验', level)
-    return result('matched' if matched else 'unmet',
-                  f"毕业专业：{entry['name']}（{entry['code']}）；按目录逐级精确核对", level)
+        return result('pending', reason + '；括号内专业或附加限制仍须核验', level)
+    return result('matched' if matched else 'unmet', reason, level)
