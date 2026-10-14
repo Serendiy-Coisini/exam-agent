@@ -19,6 +19,7 @@ from app.db.import_repository import (
     list_imported_jobs,
 )
 from app.services.llm_service import generate_llm_chat, generate_llm_json, generate_llm_summary
+from app.tools.job_category import extract_job_category_preference, is_category_job_search, job_categories
 from app.tools.job_tool import extract_location_preference, find_single_job, search_jobs
 from app.tools.policy_tool import ask_help_policy_question, search_job_policy_sources
 from app.tools.province_registry import (
@@ -76,6 +77,7 @@ def _decide_llm_first(payload: AgentAnalyzeRequest, requested_position_code: str
     fallback = _fallback_agent_decision(payload, requested_position_code)
     if (
         _is_selection_strategy_question(payload.question)
+        or is_category_job_search(payload.question)
         or (_references_current_job(payload.question) and _resolve_current_job_context(payload))
     ):
         return fallback
@@ -195,7 +197,7 @@ def _fallback_agent_decision_impl(payload: AgentAnalyzeRequest, requested_positi
             "follow_up_question": "",
             "llm_used": False,
         }
-    if re.search(r"(推荐|筛|找|能报哪些|能报什么|能报的岗位|可报岗位|岗位推荐|附近.*岗位|岗位.*推荐)", question):
+    if is_category_job_search(question) or re.search(r"(推荐|筛|找|能报哪些|能报什么|能报的岗位|可报岗位|岗位推荐|附近.*岗位|岗位.*推荐)", question):
         missing = _missing_recommendation_fields(payload, question)
         if missing:
             return {
@@ -1062,6 +1064,17 @@ def _build_no_jobs_fallback_reason(payload: AgentAnalyzeRequest) -> str:
         city=payload.city,
         region=payload.region,
     )
+    category = extract_job_category_preference(payload.question)
+    if any(category.values()):
+        scope = preference.get("city") or preference.get("province") or payload.region or "本次地区"
+        labels = "、".join(category["include"])
+        exclusions = "、".join(category["exclude"])
+        requirement = labels or f"排除{exclusions}"
+        if labels and exclusions:
+            requirement += f"；排除{exclusions}"
+        return (f"当前已导入数据中，未找到同时满足{scope}、岗位类别要求（{requirement}）"
+                "和本次画像资格条件的岗位。已保留地区、类别和资格条件，未用其他类别或其他城市凑数。"
+                "这不代表当地招考一定没有此类岗位；可以核对画像或补充对应职位表。")
     if preference.get("city") and preference.get("explicit_nearby_requested"):
         return (
             f"当前没有找到{preference['city']}附近的精确匹配岗位，"
@@ -1487,10 +1500,21 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
             "major": payload.major,
             "identity": payload.identity,
             "question": payload.question,
+            "job_category": extract_job_category_preference(payload.question),
             "result_limit": result_limit,
         },
         output_summary=_build_job_trace_summary(matched_jobs),
     )
+
+    if not matched_jobs and any(extract_job_category_preference(payload.question).values()):
+        message = _build_no_jobs_fallback_reason(payload)
+        return AgentAnalyzeResponse(
+            intent="job_recommendation", summary=message, analysis_report=message,
+            matched_jobs=[], recommendations=[], risks=[], trace=trace,
+            tool_used=True, used_tools=["job_tool.search_jobs"],
+            llm_used=bool(decision.get("llm_used")),
+            **_build_response_debug(payload=payload, matched_jobs=[], recommendation_count=0, fallback_reason=message),
+        )
 
     score_lookup_jobs = _with_requested_position_code(
         matched_jobs=matched_jobs,
@@ -2973,18 +2997,7 @@ def _question_claims_police_job(question: str) -> bool:
 
 
 def _is_police_job(job: dict) -> bool:
-    text = " ".join(
-        str(job.get(field) or "")
-        for field in [
-            "department",
-            "unit",
-            "job_title",
-            "position_name",
-            "position",
-            "notes",
-        ]
-    )
-    return bool(re.search(r"(公安|人民警察|警务|警察职位)", text))
+    return "公安" in job_categories(job)
 
 
 def _is_incomplete_question(question: str) -> bool:

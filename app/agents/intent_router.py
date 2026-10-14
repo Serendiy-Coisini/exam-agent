@@ -1,5 +1,7 @@
 import re
 
+from app.tools.job_category import is_category_job_search
+
 
 def route_intent(question: str, has_current_job: bool = False) -> str:
     """根据用户问题识别意图。
@@ -66,6 +68,9 @@ def route_intent(question: str, has_current_job: bool = False) -> str:
         compact_text,
     ):
         return "score_or_risk_query"
+
+    if is_category_job_search(compact_text):
+        return "job_recommendation"
 
     if re.search(
         r"(推荐(?:一个|[1-5一二三四五两]个)?(?:南宁|南宁市|广西南宁|按我的画像|附近|周边)?.*岗位|"

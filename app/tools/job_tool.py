@@ -3,6 +3,7 @@ import re
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from app.tools.job_category import extract_job_category_preference, matches_job_category
 from app.tools.profile_context import current_qualification_profile
 from app.tools.job_requirements import public_extra_requirements
 from app.db.import_repository import list_imported_jobs, list_imported_signup_stats, list_imported_major_catalog
@@ -135,6 +136,7 @@ def search_jobs(
 ) -> list[dict]:
     """先执行硬性条件过滤，再为候选岗位评分并返回 Top N 推荐。"""
     recommendations: list[dict] = []
+    category_preference = extract_job_category_preference(question)
     eligibility_profile = current_qualification_profile(profile or {}, education, major, identity)
     categories_by_scope: dict[tuple, list[str]] = {}
     requested_province = resolve_requested_province(region=region, question=question)
@@ -162,6 +164,8 @@ def search_jobs(
             latest[scope] = max(latest.get(scope, 0), int(row.get("year") or 0))
         source_jobs = [row for row in source_jobs if int(row.get("year") or 0) == latest[(row.get("region"), row.get("exam_type"))]]
     for source_job in source_jobs:
+        if not matches_job_category(source_job, category_preference):
+            continue
         if not _match_target(target, source_job.get("target", "")):
             continue
         if _requires_exam_type_filter(target) and not _match_exam_type(

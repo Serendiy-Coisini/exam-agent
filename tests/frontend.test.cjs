@@ -238,3 +238,10 @@ test('recognized conditions display submitted city without a city in question',(
     assert.match(elements.analystRecognizedConditions.textContent,/揭阳/);
     assert.equal(elements.analystRecognizedConditions.hidden,false);
 });
+
+
+test('category existence questions submit as job recommendations',()=>{
+    const c=load(['isJobRecommendationQuestion'],{});
+    for(const question of ['有没有揭阳公安岗的','有无揭阳税务岗位','是否有海关岗位'])
+        assert.equal(c.isJobRecommendationQuestion(question),true,question);
+});

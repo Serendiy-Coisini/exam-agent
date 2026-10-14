@@ -2685,7 +2685,7 @@ function isPolicyQuestion(question) {
 }
 
 function isJobRecommendationQuestion(question) {
-    return /(推荐|筛选|筛岗位|找岗位|能报哪些|能报什么|可报岗位|附近的?岗位|附近的?$|周边的?岗位)/.test(String(question || ""));
+    return /(推荐|筛选|筛岗位|找岗位|能报哪些|能报什么|可报岗位|附近的?岗位|附近的?$|周边的?岗位|(?:有没有|有无|是否有|还有).*(?:岗位|公安|民警|人民警察|税务|海关|边检|缉私))/.test(String(question || ""));
 }
 
 function inferQuestionLocationPreference(question) {

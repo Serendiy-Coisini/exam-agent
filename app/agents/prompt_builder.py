@@ -2,6 +2,8 @@ import json
 import re
 from typing import Any
 
+from app.tools.job_category import extract_job_category_preference
+
 from app.schemas.agent_schema import AgentAnalyzeRequest
 from app.tools.profile_context import current_qualification_profile
 from app.services.analysis_skill_service import load_skill_core
@@ -200,6 +202,7 @@ def build_current_profile_context(payload: AgentAnalyzeRequest) -> dict:
     return {
         "目标类型": payload.target, "考试类型": payload.exam_type, "招考年度": payload.year,
         "目标省份": payload.region, "目标城市": payload.city,
+        "岗位类别约束": extract_job_category_preference(payload.question),
         "当前画像资格与偏好": profile,
     }
 
