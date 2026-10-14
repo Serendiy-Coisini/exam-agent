@@ -167,13 +167,47 @@ def _certificates(clause, profile, found):
     return check('证书要求',combine(statuses,either=bool(ALTERNATIVE.search(clause))),clause,'仅按已填证书名称和明确等级核验；替代关系需人工核验')
 
 
+def _comma_clauses(raw):
+    """Separate independent comma clauses without splitting conditional OR lists."""
+    parts, start, depth = [], 0, 0
+    for pos, char in enumerate(raw):
+        if char == '(':
+            depth += 1
+        elif char == ')':
+            depth -= 1
+        elif char == ',' and depth == 0:
+            parts.append(raw[start:pos].strip())
+            start = pos + 1
+    parts.append(raw[start:].strip())
+    if len(parts) < 2 or depth or any(not part for part in parts):
+        return [raw]
+    if re.search(r'也可|亦可|否则|若|如果|对于|本科生|研究生|优先|建议|原则上|除|免|同等|替代|适合|可报考|可报名', raw):
+        return [raw]
+    for left, right in zip(parts, parts[1:]):
+        if (re.search(r'(?:或者|或)$', left) or re.match(r'(?:或者|或)', right)
+                or re.match(r'满足|任选|任意|其中|二者|两者', right)):
+            return [raw]
+    return parts
+
+
 def _remark_checks(text, profile, job=None):
     checks=[]
-    for raw in re.split(r'[。；;\n]+|(?<!\d)\d+[.、](?=[^\d])',normalized(text)):
+    sentences = re.split(r'[。；;\n]+|(?<!\d)\d+[.、](?=[^\d])', normalized(text))
+    for raw in (part for sentence in sentences for part in _comma_clauses(sentence)):
         clause=raw.strip(' ，,、.')
         if not clause:
             continue
         if re.fullmatch(r'无|无其他要求|无特殊要求|不限|男女不限|性别不限|不限性别',clause):
+            continue
+        # An explicitly reviewed empty list rules out every certificate option,
+        # even when some option names are outside the automatic certificate map.
+        if (any(pattern.search(clause) for _, pattern in CERTIFICATES)
+                and re.fullmatch(r'(?:至少)?(?:须|必须)?(?:具有|具备|持有|取得).+中的(?:任意)?一项(?:资质|资格|证书)(?:\(.*\))?', clause)):
+            empty = (profile.get('certificates_reviewed') is True and not profile.get('certificates')
+                     and profile.get('law_a_certificate') is not True)
+            checks.append(check('证书要求', 'unmet' if empty else 'pending', clause,
+                                '岗位要求至少持有列举证书之一，画像已确认没有持有证书' if empty else
+                                '按整组任选证书核验，不能将单个证书作为必须持有项；证书名称及等级需核对'))
             continue
         additional, remaining_clause = consume_qualification_clause(clause, profile, job or {})
         checks.extend(additional)
@@ -182,10 +216,10 @@ def _remark_checks(text, profile, job=None):
         clause = remaining_clause
         first_check=len(checks)
         english=list(ENGLISH.finditer(clause))
-        gender=re.search(r'(?:仅限|限|只招|招录|性别[:：]?)(男性|女性|男|女)(?:考生|报考)?|(?:男性|女性)(?:考生|报考)',clause)
+        gender=re.search(r'(?:仅限|限|只招|招录|性别[:：]?)(男性|女性|男|女)(?:考生|报考)?|(?:男性|女性)(?:考生|报考)',clause) or re.fullmatch(r'(?:性别[:：]?)?(?:男性|女性|男|女)',clause)
         certs=[(name,pattern,m) for name,pattern in CERTIFICATES for m in pattern.finditer(clause)]
         types=sum(bool(x) for x in (english,gender,certs))
-        complex_condition=bool(re.search(r'优先|建议|适合|原则上|除|免|非|不得|不接受|不限制|不限|无需|不需|本科生|研究生|专业英语|英语专业|同等|替代|也可',clause))
+        complex_condition=bool(re.search(r'优先|建议|适合|原则上|除|免|非|不得|不接受|不限制|不限|无需|不需|本科生|研究生|专业英语|英语专业|同等|替代|也可|可报考|可报名',clause))
         if complex_condition or (ALTERNATIVE.search(clause) and types>1):
             checks.append(check('备注','pending',clause,'存在建议、否定、条件或跨条件替代关系，需人工核验'))
             continue

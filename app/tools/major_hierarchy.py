@@ -275,7 +275,15 @@ def _parse(value, index, trace=None):
     """Resolve allowed levels; unrecognized job terms are non-matches."""
     if trace is None:
         trace = []
-    value = re.sub(r'\s+', '', value)
+    # Whitespace can separate complete requirements, or just format a code/name.
+    compact = re.sub(r'\s+', '', value)
+    if compact not in index['choices'] and re.search(r'\s', value):
+        joined = re.sub(r'(?<!\d)(\d{2}(?:\d{2})?(?:\d{2,3})?(?:TK|T|K)?)\s+(?=[\u3400-\u9fff])', r'\1', value)
+        spaced = re.split(r'\s+', joined.strip())
+        if len(spaced) > 1 and all(term in index['choices'] or term in _UNRESTRICTED for term in spaced):
+            parsed = [_parse(term, index, trace) for term in spaced]
+            return lambda entry: _any_major_match(parsed, entry), _restriction_levels(parsed)
+    value = compact
     choices = set(index['choices'].get(value, []))
     if choices:
         parsed = [(lambda entry, level=level, code=code: _match_major_path(level, code, entry, index, trace), {level})

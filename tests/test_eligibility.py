@@ -81,6 +81,32 @@ class EligibilityTests(unittest.TestCase):
         settings.AUTH_ENABLED=True
         self.assertEqual(asyncio.run(fixtures.request('POST','/api/v1/jobs/eligibility',{}))[0],401)
 
+    def test_independent_gender_clause_is_not_hidden_by_fresh_or_english_alternatives(self):
+        for remark in ['2027届高校毕业生,女性,在本单位最低服务年限为5年',
+            '应届高校毕业生，女性，在本单位最低服务年限为5年',
+            '2027届高校毕业生,大学英语四级合格或四级考试成绩425分及以上,仅限女性,在本单位最低服务年限为5年']:
+            with self.subTest(remark=remark):
+                result=self.evaluate(remark,year=2027)
+                self.assertEqual(result['status'],'unmet',result)
+                self.assertTrue(any(c['field']=='性别' and c['status']=='unmet' for c in result['checks']))
+        self.assertNotEqual(self.evaluate('2027届高校毕业生,女性,在本单位最低服务年限为5年',self.profile(gender='女'),year=2027)['status'],'unmet')
+
+    def test_comma_cross_condition_alternatives_remain_pending(self):
+        for remark in ['限女性，或持有法律职业资格证书',
+            '限女性，男性具有法律职业资格证书也可报考',
+            '本科生限女性，研究生不限性别',
+            '须注册会计师资格，或税务师资格，二者之一即可',
+            '限女性，男性可报考', '限女性，持证者可以免于性别要求']:
+            self.assertEqual(self.evaluate(remark)['status'],'pending',remark)
+
+    def test_reviewed_empty_certificates_excludes_explicit_any_one_certificate_list(self):
+        remark='至少具有注册会计师、税务师、国家统一法律职业资格考试(A类证书)、计算机技术与软件专业技术资格(中级及以上)中的一项资质(请在备注栏填写证书名称及编号),大学英语四级合格或四级考试成绩425分及以上,在本单位最低服务年限为5年'
+        self.assertEqual(self.evaluate(remark)['status'],'unmet')
+        self.assertEqual(self.evaluate(remark,self.profile(certificates_reviewed=False))['status'],'pending')
+        self.assertNotEqual(self.evaluate(remark,self.profile(certificates=['税务师']))['status'],'unmet')
+        self.assertNotEqual(self.evaluate(remark,self.profile(law_a_certificate=True))['status'],'unmet')
+        self.assertEqual(self.evaluate('具有注册会计师或税务师中的一项资质者优先')['status'],'pending')
+
     def test_gender_restriction_and_non_restriction_are_distinguished(self):
         self.assertEqual(self.evaluate('限男性报考。')['status'],'matched')
         self.assertEqual(self.evaluate('限女性报考。')['status'],'unmet')

@@ -95,6 +95,16 @@ class MajorHierarchyTests(unittest.TestCase):
         self.assertEqual(self.check('星算类(不含星算工程)')['status'],'unmet')
         self.assertEqual(self.check('星算类(不含星图工程)')['status'],'matched')
 
+    def test_whitespace_separates_complete_catalog_terms_without_merging_them(self):
+        for requirement,status in [('8002星造类 8001星算类','matched'),
+            ('星造类\t星算类','matched'),('800201K星造工程 800101星算工程','matched'),
+            ('星造类 晨语类','unmet'),('8002 星造类 8001 星算类','matched'),
+            ('星 算 工 程','matched'),('星造类 未编目方向','unmet')]:
+            with self.subTest(requirement=requirement):
+                result=self.check(requirement)
+                self.assertEqual(result['status'],status,result)
+                self.assertEqual(result['evidence'],requirement)
+
     def test_exact_specialty_and_hierarchy(self):
         for requirement, level in [('星算工程', 'specialty'), ('800101星算工程', 'specialty'),
                                    ('星算类', 'category'), ('8001', 'category'),
