@@ -154,7 +154,7 @@ test('filename import prefers recruitment year when written exam calendar year a
 });
 
 
-test('profile recommendation retains a selected city when the saved profile city is empty', () => {
+test('current city wins over saved profile even when asking by profile', () => {
     const profile={province:'广东',city:'',exam_type:'国考',education:'本科',major:'软件工程',identity:'应届生'};
     const filters={...profile,city:'汕头'};
     const c=load(['buildAnalystPayload'],{
@@ -167,7 +167,13 @@ test('profile recommendation retains a selected city when the saved profile city
     assert.equal(c.buildAnalystPayload('按我的画像推荐一个岗位').city,'汕头');
     c.userProfile={...profile,city:'汕头'};
     filters.city='湛江';
-    assert.equal(c.buildAnalystPayload('按我的画像推荐一个岗位').city,'汕头');
+    assert.equal(c.buildAnalystPayload('按我的画像推荐一个岗位').city,'湛江');
+    filters.city='不限';
+    assert.equal(c.buildAnalystPayload('按我的画像推荐一个岗位').city,'不限');
+    assert.equal(c.userProfile.city,'汕头');
+    filters.city='揭阳';
+    c.inferQuestionLocationPreference=()=>({city:'汕头',province:'广东'});
+    assert.equal(c.buildAnalystPayload('推荐汕头岗位').city,'汕头');
 });
 
 test('a late province option response cannot erase a newly typed profile city', async () => {
@@ -200,4 +206,35 @@ test('late analyst city options preserve a newer city choice and ignore an older
     resolvers['广西']({cities:['南宁']});await latest;
     const count=calls.length;resolvers['广东']({cities:['汕头']});await stale;
     assert.equal(calls.length,count);
+});
+
+
+test('current controls use profile only for empty values, preserving explicit unlimited',()=>{
+    const fields={analystCity:'揭阳',analystMajor:'不限'};
+    const c=load(['getCurrentAnalysisFilters'],{getValue:id=>fields[id]||'',
+        userProfile:{province:'广东',city:'汕头',education:'本科',major:'软件工程',identity:'应届生',exam_type:'国考'}});
+    const filters=c.getCurrentAnalysisFilters();
+    assert.equal(filters.city,'揭阳');assert.equal(filters.province,'广东');
+    assert.equal(filters.major,'不限');assert.equal(filters.education,'本科');
+});
+
+test('refreshing options preserves temporary analyst conditions',()=>{
+    const fields={analystRegion:'广西',analystCity:'南宁',analystEducation:'硕士',analystIdentity:'普通人员'};
+    const c=load(['populateBaseOptions'],{getValue:id=>fields[id]||'',
+        userProfile:{province:'广东',city:'汕头',education:'本科',identity:'应届生'},
+        ALL_PROVINCES:['广东','广西'],PROFILE_UNSET_OPTION:'未填写',
+        uniqueValues:v=>[...new Set(v)],normalizeArray:v=>v||[],
+        populateSelect:(id,values,selected)=>{fields[id]=selected;},
+        document:{getElementById:()=>null}});
+    c.populateBaseOptions({cities:['汕头'],educations:['本科','硕士'],identities:['普通人员']});
+    assert.equal(fields.analystRegion,'广西');assert.equal(fields.analystCity,'南宁');
+    assert.equal(fields.analystEducation,'硕士');assert.equal(fields.analystIdentity,'普通人员');
+});
+
+test('recognized conditions display submitted city without a city in question',()=>{
+    const elements={};const c=load(['renderRecognizedConditions'],{
+        document:{getElementById:id=>elements[id]??=( {textContent:'',hidden:true})}});
+    c.renderRecognizedConditions({city:'揭阳',region:'广东',location_preference:{},result_limit:1});
+    assert.match(elements.analystRecognizedConditions.textContent,/揭阳/);
+    assert.equal(elements.analystRecognizedConditions.hidden,false);
 });

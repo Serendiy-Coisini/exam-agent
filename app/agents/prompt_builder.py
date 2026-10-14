@@ -193,6 +193,10 @@ SCORE_RISK_PROMPT = """
 def build_current_profile_context(payload: AgentAnalyzeRequest) -> dict:
     """Send current decision constraints only, excluding arbitrary/private extras."""
     profile = current_qualification_profile(payload.profile, payload.education, payload.major, payload.identity)
+    # Target preferences follow this request. Actual hukou and qualifications remain facts.
+    profile.update(province=payload.region, city=payload.city, exam_type=payload.exam_type)
+    profile.pop("target_region", None)
+    profile.pop("target_exam_type", None)
     return {
         "目标类型": payload.target, "考试类型": payload.exam_type, "招考年度": payload.year,
         "目标省份": payload.region, "目标城市": payload.city,

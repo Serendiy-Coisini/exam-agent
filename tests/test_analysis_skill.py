@@ -16,6 +16,23 @@ class AnalysisSkillTests(unittest.TestCase):
         return AgentAnalyzeRequest(question="按画像分析这个岗位", education="本科",
                                    major="软件工程", region="广东", exam_type="国考")
 
+    def test_current_target_overrides_saved_preferences_without_changing_hukou(self):
+        original = {"province": "广东", "city": "汕头", "exam_type": "国考",
+                    "hukou_city": "汕头", "major": "软件工程",
+                    "target_region": "广东汕头", "target_exam_type": "国考"}
+        for city in ("揭阳", "不限"):
+            payload = AgentAnalyzeRequest(question="按我的画像推荐一个岗位", region="广西",
+                city=city, exam_type="省考", education="本科", major="软件工程", profile=original)
+            context = prompt_builder.build_current_profile_context(payload)
+            profile = context["当前画像资格与偏好"]
+            self.assertEqual(profile["province"], "广西")
+            self.assertEqual(profile["city"], city)
+            self.assertEqual(profile["exam_type"], "省考")
+            self.assertEqual(profile["hukou_city"], "汕头")
+            self.assertNotIn("target_region", profile)
+            self.assertNotIn("target_exam_type", profile)
+            self.assertEqual(payload.profile, original)
+
     def test_public_method_is_in_free_chat_with_fact_boundaries(self):
         prompt = prompt_builder.build_free_chat_system_prompt()
         self.assertIn("网友红领巾", prompt)

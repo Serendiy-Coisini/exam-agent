@@ -92,6 +92,47 @@ class ImportedCityResolverTests(unittest.TestCase):
         self.assertEqual(captured[0].city,"汕头")
 
 
+    def test_adjusted_city_survives_api_profile_merge_and_old_job_context(self):
+        from app.api.v1 import agent as api
+        from app.agents import prompt_builder
+        from app.services import model_settings_service
+        captured = []
+        saved = {"province": "广东", "city": "汕头", "education": "本科",
+                 "major": "软件工程", "identity": "应届生", "exam_type": "国考"}
+        configuration = model_settings_service.ModelConfiguration("https://fiction.invalid", "fiction", "")
+        original = api.analyze_exam_request
+        def inspect(payload):
+            captured.append(prompt_builder.build_current_profile_context(payload))
+            return original(payload)
+        from app.services.import_service import confirm_import_task
+        self.task([self.row(province="guangdong", region="广东省汕头市", year=2027, exam_type="国考")])
+        confirm_import_task("import_fixture")
+        jobs = [AnalystCityScopeTests().job("ST", "汕头"),
+                AnalystCityScopeTests().job("JY", "揭阳")]
+        for job in jobs:
+            job["position"] = job["position_name"]
+        with patch.object(api, "get_optional_agent_user", return_value={"id": 1}), \
+                patch.object(api.repositories, "get_user_profile", return_value=saved), \
+                patch.object(api, "analyze_exam_request", side_effect=inspect), \
+                patch.object(exam_agent, "_decide_llm_first", return_value={"intent": "job_recommendation"}), \
+                patch.object(job_tool, "_read_jobs", return_value=jobs), \
+                patch.object(job_tool, "list_imported_major_catalog", return_value=[]), \
+                patch("app.services.llm_service.get_model_configuration", return_value=configuration):
+            for city, expected in (("揭阳", {"JY"}), ("汕头", {"ST"}), ("不限", {"ST", "JY"})):
+                status, result = asyncio.run(request("POST", "/api/v1/agent/analyze", {
+                    "mode": "job_recommendation", "question": "按我的画像推荐岗位", "city": city,
+                    "region": "广东", "exam_type": "国考", "education": "本科",
+                    "major": "软件工程", "identity": "应届生",
+                    "year": 2027, "result_limit": 5, "profile": saved,
+                    "current_job": {"position_code": "ST", "city": "汕头"},
+                    "last_recommendations": [{"position_code": "ST", "city": "汕头"}],
+                    "messages": [{"role": "assistant", "content": "此前推荐汕头岗位ST"}]}))
+                self.assertEqual(status, 200)
+                self.assertEqual({j["position_code"] for j in result["matched_jobs"]}, expected, result)
+                self.assertEqual(captured[-1]["目标城市"], city)
+                self.assertEqual(captured[-1]["当前画像资格与偏好"]["city"], city)
+        self.assertEqual(saved["city"], "汕头")
+
     def test_imported_multi_city_source_is_not_collapsed_into_one_city(self):
         from app.services.import_service import confirm_import_task
         self.task([self.row(province="guangdong",region="广东省汕头市",year=2027,exam_type="国考"),

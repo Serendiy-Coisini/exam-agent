@@ -1691,14 +1691,14 @@ function populateBaseOptions(options) {
     const educations = uniqueValues(["不限", ...normalizeArray(options?.educations)]);
     const identities = uniqueValues(["不限", ...normalizeArray(options?.identities)]);
 
-    populateSelect("analystRegion", provinces, userProfile.province || "不限");
+    populateSelect("analystRegion", provinces, getValue("analystRegion") || userProfile.province || "不限");
     populateSelect("singleJobProvince", provinces, userProfile.province || "不限");
     populateSelect("profileProvince", [PROFILE_UNSET_OPTION, ...provinces], userProfile.province || PROFILE_UNSET_OPTION);
-    populateSelect("analystCity", cities, userProfile.city || "不限");
+    populateSelect("analystCity", cities, getValue("analystCity") || userProfile.city || "不限");
     populateSelect("profileCity", [PROFILE_UNSET_OPTION, ...cities], userProfile.city || PROFILE_UNSET_OPTION);
-    populateSelect("analystEducation", educations, userProfile.education || "不限");
+    populateSelect("analystEducation", educations, getValue("analystEducation") || userProfile.education || "不限");
     populateSelect("profileEducation", [PROFILE_UNSET_OPTION, ...educations], userProfile.education || PROFILE_UNSET_OPTION);
-    populateSelect("analystIdentity", identities, userProfile.identity || "不限");
+    populateSelect("analystIdentity", identities, getValue("analystIdentity") || userProfile.identity || "不限");
     populateSelect("profileIdentity", [PROFILE_UNSET_OPTION, ...identities], userProfile.identity || PROFILE_UNSET_OPTION);
 
     const scoreProvince = document.getElementById("scoreProvince");
@@ -2315,7 +2315,7 @@ function formatProfileFieldValue(profile, field) {
 }
 
 function buildProfileSummary(profile) {
-    return ["province", "exam_type", "education", "major", "identity"]
+    return ["province", "city", "exam_type", "education", "major", "identity"]
         .filter((field) => isProfileFieldFilled(profile, field))
         .map((field) => formatProfileFieldValue(profile, field))
         .join(" · ") || "未填写画像";
@@ -2324,11 +2324,11 @@ function buildProfileSummary(profile) {
 function getCurrentAnalysisFilters() {
     return {
         exam_type: getValue("analystExamType") || userProfile.exam_type || "省考",
-        province: getValue("analystRegion") || "不限",
-        city: getValue("analystCity") || "不限",
-        education: getValue("analystEducation") || "不限",
-        major: getValue("analystMajor") || "不限",
-        identity: getValue("analystIdentity") || "不限"
+        province: getValue("analystRegion") || userProfile.province || "不限",
+        city: getValue("analystCity") || userProfile.city || "不限",
+        education: getValue("analystEducation") || userProfile.education || "不限",
+        major: getValue("analystMajor") || userProfile.major || "不限",
+        identity: getValue("analystIdentity") || userProfile.identity || "不限"
     };
 }
 
@@ -2387,8 +2387,9 @@ function renderAnalysisConditionSurfaces() {
 function renderRecognizedConditions(payload = null) {
     const location = payload?.location_preference || {};
     const items = [];
-    if (location.city) {
-        items.push(location.city);
+    const city = payload?.city || location.city;
+    if (city) {
+        items.push(city === "不限" ? "不限城市" : city);
     }
     const resultLimit = Number(payload?.result_limit);
     if (Number.isFinite(resultLimit) && resultLimit > 0 && resultLimit < 5) {
@@ -2551,16 +2552,8 @@ function setAnalystInputDisabled(disabled) {
 function buildAnalystPayload(question) {
     const currentFilters = getCurrentAnalysisFilters();
     const contextPreference = inferAnalysisContextPreference(question);
-    const selectedFilters = contextPreference === "profile"
-        ? {
-            exam_type: userProfile.exam_type || "省考",
-            province: userProfile.province || "不限",
-            city: userProfile.city || currentFilters.city || "不限",
-            education: userProfile.education || "不限",
-            major: userProfile.major || "",
-            identity: userProfile.identity || "不限"
-        }
-        : { ...currentFilters };
+    // Controls start from the saved profile; temporary edits always win.
+    const selectedFilters = { ...currentFilters };
     const questionLocation = inferQuestionLocationPreference(question);
     if (questionLocation.province) {
         selectedFilters.province = questionLocation.province;
