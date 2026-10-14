@@ -152,3 +152,52 @@ test('filename import prefers recruitment year when written exam calendar year a
     for(const name of ['2025年11月笔试成绩.xlsx','笔试年份2025_成绩表.csv'])
         assert.equal(c.detectImportYear(name),'',name);
 });
+
+
+test('profile recommendation retains a selected city when the saved profile city is empty', () => {
+    const profile={province:'广东',city:'',exam_type:'国考',education:'本科',major:'软件工程',identity:'应届生'};
+    const filters={...profile,city:'汕头'};
+    const c=load(['buildAnalystPayload'],{
+        userProfile:profile,getCurrentAnalysisFilters:()=>filters,
+        inferAnalysisContextPreference:()=> 'profile', inferQuestionLocationPreference:()=>({}),
+        isPolicyQuestion:()=>false,isJobRecommendationQuestion:()=>true,getValue:()=>'',
+        inferResultLimit:()=>1,activeSessionId:null,currentUser:null,authToken:'',
+        currentJobContext:null,lastRecommendationJobs:[],buildCurrentJobPayload:v=>v,
+    });
+    assert.equal(c.buildAnalystPayload('按我的画像推荐一个岗位').city,'汕头');
+    c.userProfile={...profile,city:'汕头'};
+    filters.city='湛江';
+    assert.equal(c.buildAnalystPayload('按我的画像推荐一个岗位').city,'汕头');
+});
+
+test('a late province option response cannot erase a newly typed profile city', async () => {
+    const city={value:''}; const province={value:'广东'}; let resolve; const calls=[];
+    const c=load(['handleProfileProvinceChange'],{
+        PROFILE_UNSET_OPTION:'未填写',getValue:id=>id==='profileProvince'?province.value:city.value,
+        fetchOptions:()=>new Promise(done=>{resolve=done}),normalizeArray:v=>v||[],
+        populateSelect:(id,values,selected)=>{calls.push(selected);city.value=selected;},
+        showToast(){},getErrorText:String,
+    });
+    const pending=c.handleProfileProvinceChange({target:{value:'广东'}});
+    city.value='汕头'; resolve({cities:['广州','汕头']}); await pending;
+    assert.equal(city.value,'汕头');
+});
+
+
+test('late analyst city options preserve a newer city choice and ignore an older province', async () => {
+    const fields={analystRegion:'广东',analystCity:'不限'}; const resolvers={}; const calls=[];
+    const c=load(['refreshCityOptions'],{
+        getValue:id=>fields[id],fetchOptions:name=>new Promise(done=>{resolvers[name]=done}),
+        normalizeArray:v=>v||[],populateSelect:(id,values,selected)=>{calls.push({id,values,selected});fields[id]=selected;},
+        showToast(){},getErrorText:String,
+    });
+    const first=c.refreshCityOptions('analystCity','广东','不限');
+    fields.analystCity='汕头';resolvers['广东']({cities:['汕头']});await first;
+    assert.equal(fields.analystCity,'汕头');
+    const stale=c.refreshCityOptions('analystCity','广东','不限');
+    fields.analystRegion='广西';fields.analystCity='南宁';
+    const latest=c.refreshCityOptions('analystCity','广西','不限');
+    resolvers['广西']({cities:['南宁']});await latest;
+    const count=calls.length;resolvers['广东']({cities:['汕头']});await stale;
+    assert.equal(calls.length,count);
+});

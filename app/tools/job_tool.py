@@ -3,6 +3,8 @@ import re
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from app.tools.profile_context import current_qualification_profile
+from app.tools.job_requirements import public_extra_requirements
 from app.db.import_repository import list_imported_jobs, list_imported_signup_stats, list_imported_major_catalog
 from app.tools.region_resolver import (
     canonical_province,
@@ -42,17 +44,6 @@ GUANGXI_CITY_NEIGHBORS = {
     "来宾": ["南宁", "柳州", "贵港", "河池"],
     "崇左": ["南宁", "百色"],
 }
-
-LOCATION_PREFERENCE_KEYWORDS = [
-    "附近",
-    "周边",
-    "离家近",
-    "离家近一点",
-    "就近",
-    "本地",
-    "通勤",
-    "家在",
-]
 
 COMPUTER_RELATED_MAJORS = {
     "软件工程",
@@ -144,6 +135,7 @@ def search_jobs(
 ) -> list[dict]:
     """先执行硬性条件过滤，再为候选岗位评分并返回 Top N 推荐。"""
     recommendations: list[dict] = []
+    eligibility_profile = current_qualification_profile(profile or {}, education, major, identity)
     categories_by_scope: dict[tuple, list[str]] = {}
     requested_province = resolve_requested_province(region=region, question=question)
     effective_region = requested_province.get("province") or region
@@ -178,6 +170,8 @@ def search_jobs(
         ):
             continue
 
+        if not _matches_recommendation_city(source_job, location_preference):
+            continue
         region_score = _score_region(effective_region, source_job.get("region", ""))
         if region_score == 0:
             continue
@@ -196,20 +190,23 @@ def search_jobs(
                           and (not row.get("degree_level") or education in str(row.get("degree_level")))]
         categories = categories_by_scope[catalog_scope]
         major_score = _score_major(major, source_job.get("major_required", ""), categories=categories)
-        if major_score == 0:
+        # Scores rank already verified candidates; semantic similarity is not eligibility.
+        eligibility = _evaluate_recommendation_eligibility(source_job, eligibility_profile)
+        if eligibility["status"] == "unmet":
             continue
+        major_check = next((item for item in eligibility["checks"] if item["field"] == "专业"), {})
+        if major_check.get("status") == "matched" and not major_score:
+            major_score = 30
 
         identity_score = _score_identity(
             identity,
             source_job.get("identity_required", ""),
         )
-        if identity_score == 0:
-            continue
-
-        compatible, pending = _check_additional_qualifications(source_job, profile or {})
-        if not compatible:
-            continue
+        pending = [f"{item['field']}待核验：{item['reason']}" for item in eligibility["checks"] if item["status"] == "pending"]
         job = dict(source_job)
+        job["eligibility_status"] = eligibility["status"]
+        job["eligibility_checks"] = eligibility["checks"]
+        job["major_restriction_level"] = eligibility["major_restriction_level"]
         qualification_score = _calculate_qualification_score(
             region_score=region_score,
             education_score=education_score,
@@ -297,10 +294,15 @@ def search_jobs(
             suitability=suitability,
             location_preference_reason=location_preference_reason,
         )
+        if eligibility["status"] == "pending":
+            job["match_level"] = "待核验备选"
+            job["ai_analysis"]["qualification_match"] = "资格尚待核验，不能确认整体可报：" + "；".join(pending[:4])
+        job["ai_analysis"]["major_match"] = major_check.get("reason") or "专业要求尚待核验"
         recommendations.append(job)
 
     recommendations.sort(
         key=lambda item: (
+            int(item.get("eligibility_status") == "matched"),
             int(item.get("_ranking_score") or 0),
             int(item.get("match_score") or 0),
             int(item.get("suitability_score") or 0),
@@ -316,6 +318,17 @@ def search_jobs(
         job.pop("_ranking_score", None)
         job.pop("_location_preference_reason", None)
     return results
+
+
+def _evaluate_recommendation_eligibility(job: dict, profile: dict) -> dict:
+    # Import after module initialization: the shared rules reuse education scoring.
+    from app.tools.eligibility_rules import evaluate_job
+    facts = dict(job)
+    facts.update(education_requirement=job.get("education_required") or "",
+                 major_requirement=job.get("major_required") or "",
+                 identity_requirement=job.get("identity_required") or "",
+                 remark=job.get("_raw_remark", job.get("remark") or job.get("notes") or ""))
+    return evaluate_job(facts, profile, check_remarks=True)
 
 
 def find_single_job(
@@ -441,18 +454,9 @@ def extract_location_preference(
         else ""
     )
 
-    explicit_nearby_requested = bool(
-        any(keyword in question_text for keyword in LOCATION_PREFERENCE_KEYWORDS)
-        or (focus_city and re.search(rf"离{re.escape(focus_city)}近", question_text))
-    )
-    nearby_requested = bool(
-        (focus_city or focus_province)
-        and (
-            source == "question"
-            or filter_city
-            or explicit_nearby_requested
-        )
-    )
+    explicit_nearby_requested = bool(re.search(r"附近|周边", question_text)) and not bool(
+        re.search(r"(?:不要|不|别)[^，。；!?！？]{0,6}(?:附近|周边)", question_text))
+    nearby_requested = bool((focus_city or focus_province) and explicit_nearby_requested)
 
     return {
         "region": normalized_region,
@@ -709,6 +713,7 @@ def _normalize_imported_job_row(row: dict, signup: dict | None = None) -> dict:
             "exam_type": _imported_tool_exam_type(row.get("exam_type")),
             "region": province or row.get("region"),
             "city": row.get("region") or "",
+            "work_location": row.get("region") or "",
             "department_code": row.get("department_code") or "",
             "department": row.get("department_name") or row.get("unit_name") or "",
             "unit": row.get("unit_name") or "",
@@ -724,6 +729,7 @@ def _normalize_imported_job_row(row: dict, signup: dict | None = None) -> dict:
             "identity_required": row.get("identity_requirement") or "",
             "grassroots_requirement": row.get("grassroots_requirement") or "",
             "qualification_requirement": row.get("qualification_requirement") or "",
+            "eligibility_extra_requirements": public_extra_requirements(row),
             "job_description": row.get("job_description") or "",
             "contact_phone": row.get("contact_phone") or "",
             "work_address": row.get("work_address") or "",
@@ -927,8 +933,11 @@ def _looks_required(value: str) -> bool:
 def _normalize_job_row(row: dict, defaults: dict) -> dict:
     """把不同来源职位表统一成 exam_agent 当前需要的岗位字段。"""
     normalized = {**defaults, **row}
+    normalized["_raw_remark"] = _normalize_text(row.get("remark") or row.get("notes") or "")
     raw_region = _normalize_text(row.get("region") or defaults.get("region", ""))
     region, city = _split_region_city(raw_region)
+    normalized["_raw_city"] = _normalize_text(row.get("city") or city)
+    normalized["_raw_work_location"] = _normalize_text(row.get("work_location") or raw_region)
     default_region = _normalize_region(defaults.get("region", ""))
     raw_job_id = _normalize_text(normalized.get("job_id") or normalized.get("position_code"))
     normalized["position"] = _normalize_text(
@@ -987,6 +996,7 @@ def _normalize_job_row(row: dict, defaults: dict) -> dict:
         normalized["region"] = _normalize_region(inferred_region["province"])
     if inferred_region.get("city") and not normalized["city"]:
         normalized["city"] = _normalize_city(inferred_region["city"])
+        normalized["_city_inferred_from_text"] = True
     normalized["district"] = _normalize_text(
         normalized.get("district") or inferred_region.get("district", "")
     )
@@ -997,6 +1007,34 @@ def _normalize_job_row(row: dict, defaults: dict) -> dict:
         normalized["job_id"] = display_position_code
 
     return normalized
+
+
+def _matches_recommendation_city(job: dict, preference: dict) -> bool:
+    """A selected city is a hard constraint, never a province-wide ranking bonus."""
+    target = _normalize_city(preference.get("city", ""))
+    if not target:
+        return True
+    allowed = {target}
+    if preference.get("explicit_nearby_requested"):
+        allowed.update(_normalize_city(city) for city in preference.get("nearby_cities", []))
+    # Administrative work locations are evidence. An agency name or a note is not.
+    locations = [job.get("_raw_work_location") or job.get("work_location")]
+    if not job.get("_city_inferred_from_text"):
+        locations.append(job.get("_raw_city") or job.get("city"))
+    for location in locations:
+        if not str(location or "").strip():
+            continue
+        parts = [part.strip() for part in re.split(r"[、,，;；/]|或|以及|及", str(location)) if part.strip()]
+        resolved = [resolve_region(part).get("city", "") for part in parts]
+        if any(resolved):
+            # Multi-location posts must not be presented as definitely in one city.
+            return all(city and _normalize_city(city) in allowed for city in resolved)
+        province = _normalize_region(job.get("region", ""))
+        plain = [re.sub(r"^" + re.escape(province) + r"(?:省|自治区|特别行政区)?[-·\s]*", "", part)
+                 if province else part for part in parts]
+        if plain and all(_normalize_city(part) in allowed for part in plain):
+            return True
+    return False
 
 
 def _score_location_preference(job: dict, preference: dict) -> tuple[int, str]:

@@ -259,8 +259,8 @@ class AuditRegressions(unittest.TestCase):
         self.assertEqual({d["year"] for d in repo.list_imported_dataset_summaries()}, {2025, 2026})
 
     def test_imported_major_catalog_participates_in_matching(self):
-        repo.confirm_import_task_data(self.task([self.row(major_requirement="经济学类")]))
-        major = dict(year=2026, province="guangxi", major_name="财政学", major_code="020201", major_category="经济学类", degree_level="本科")
+        repo.confirm_import_task_data(self.task([self.row(major_requirement="财政学类")]))
+        major = dict(year=2026, province="guangxi", major_name="财政学", major_code="020201", major_category="财政学类", degree_level="本科")
         repo.confirm_import_task_data(self.task([major], "major_catalog", "import_major"))
         jobs = job_tool.search_jobs(target="公务员", exam_type="省考", region="广西", education="本科", major="财政学", identity="不限")
         self.assertTrue(jobs)

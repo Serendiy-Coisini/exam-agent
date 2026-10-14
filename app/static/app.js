@@ -1754,6 +1754,7 @@ async function handleAnalystProvinceChange(event) {
 }
 
 async function handleProfileProvinceChange(event) {
+    const cityBeforeLoad = getValue("profileCity");
     const province = event.target.value === PROFILE_UNSET_OPTION ? "不限" : event.target.value;
     try {
         const options = await fetchOptions(province);
@@ -1762,7 +1763,7 @@ async function handleProfileProvinceChange(event) {
         populateSelect(
             "profileCity",
             [PROFILE_UNSET_OPTION, "不限", ...normalizeArray(options?.cities)],
-            PROFILE_UNSET_OPTION
+            getValue("profileCity") !== cityBeforeLoad ? getValue("profileCity") : PROFILE_UNSET_OPTION
         );
     } catch (error) {
         showToast(`城市选项加载失败：${getErrorText(error)}`, "error");
@@ -1770,9 +1771,14 @@ async function handleProfileProvinceChange(event) {
 }
 
 async function refreshCityOptions(selectId, province, selectedCity) {
+    const provinceId = selectId === "analystCity" ? "analystRegion" : "profileProvince";
+    const cityBeforeLoad = getValue(selectId);
     try {
         const options = await fetchOptions(province);
-        populateSelect(selectId, ["不限", ...normalizeArray(options?.cities)], selectedCity || "不限");
+        if (getValue(provinceId) !== province) return;
+        const currentCity = getValue(selectId);
+        populateSelect(selectId, ["不限", ...normalizeArray(options?.cities)],
+            currentCity !== cityBeforeLoad ? currentCity : (selectedCity || "不限"));
     } catch (error) {
         showToast(`城市选项加载失败：${getErrorText(error)}`, "error");
     }
@@ -2390,7 +2396,7 @@ function renderRecognizedConditions(payload = null) {
     }
     let text = items.length ? `本轮识别条件：${items.join(" · ")}` : "";
     if (text && location.nearby && location.city) {
-        text += `。当前未接入地理距离数据，先按${location.city}及${location.province || "同省"}区内岗位筛选。`;
+        text += `。当前未接入地理距离数据，仅在明确有周边关系的城市中补充；不会自动放宽到全省。`;
     }
     ["analystRecognizedConditions", "contextRecognizedConditions"].forEach((id) => {
         const element = document.getElementById(id);
@@ -2549,7 +2555,7 @@ function buildAnalystPayload(question) {
         ? {
             exam_type: userProfile.exam_type || "省考",
             province: userProfile.province || "不限",
-            city: userProfile.city || "不限",
+            city: userProfile.city || currentFilters.city || "不限",
             education: userProfile.education || "不限",
             major: userProfile.major || "",
             identity: userProfile.identity || "不限"

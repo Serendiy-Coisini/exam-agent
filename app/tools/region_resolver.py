@@ -1,8 +1,11 @@
 import csv
 import re
+import sqlite3
 from functools import lru_cache
+from contextlib import closing
 from pathlib import Path
 
+from app.db.database import database_path
 from app.db.import_repository import list_imported_dataset_summaries, list_imported_jobs
 from app.tools.province_registry import (
     PROVINCE_NAME_BY_SLUG,
@@ -44,7 +47,7 @@ def resolve_region(text: str) -> dict:
 
     matches = [
         alias
-        for alias in _load_region_aliases()
+        for alias in (*_load_region_aliases(), *_imported_city_aliases())
         if alias["normalized_alias"] and alias["normalized_alias"] in normalized_text
     ]
     if not matches:
@@ -152,6 +155,51 @@ def is_unlimited_region_value(value: str) -> bool:
 
 def normalize_region_text(text: str) -> str:
     return re.sub(r"[\s,，。；;：:\-_/（）()【】\[\]“”\"'、]+", "", str(text or "").strip())
+
+
+def _imported_city_aliases() -> tuple[dict, ...]:
+    """Derive city names only from explicit imported administrative locations."""
+    path = database_path()
+    if not path.exists():
+        return ()
+    try:
+        stamps = tuple((p.stat().st_mtime_ns, p.stat().st_size) if p.exists() else (0, 0)
+                       for p in (path, Path(str(path) + "-wal")))
+        return _read_imported_city_aliases(str(path), stamps)
+    except (OSError, sqlite3.Error):
+        return ()
+
+
+@lru_cache(maxsize=4)
+def _read_imported_city_aliases(path: str, stamps: tuple) -> tuple[dict, ...]:
+    del stamps  # Part of the cache key: new imports/deletions invalidate immediately.
+    with closing(sqlite3.connect(Path(path).as_uri() + "?mode=ro", uri=True)) as db:
+        rows = db.execute("SELECT DISTINCT province,region FROM exam_jobs WHERE region IS NOT NULL")
+        aliases = {}
+        for stored_province, location in rows:
+            for part in re.split(r"[、,，;；/]|或", str(location or "")):
+                detected = detect_province_in_text(part).get("province")
+                province = detected or get_province_name(str(stored_province or "")) or ""
+                if not province:
+                    continue
+                place = re.sub(r"^.*?(?:省|自治区|特别行政区)", "", part.strip())
+                place = re.sub(r"^" + re.escape(province) + r"(?:省|自治区|特别行政区)?[-·\s]*", "", place)
+                if province in {"北京", "天津", "上海", "重庆"}:
+                    city = province
+                else:
+                    match = re.match(r"([^市]+?)(市|自治州|地区|盟)", place)
+                    if match:
+                        city = match[1] if match[2] == "市" else match[0]
+                    elif re.fullmatch(r"[\u4e00-\u9fff]{2,12}", place) and not place.endswith(("区", "县", "省")):
+                        city = place
+                    else:
+                        continue
+                if not city or city in {"全国", "不限", province} and province not in {"北京", "天津", "上海", "重庆"}:
+                    continue
+                for alias in (city, city + "市" if not city.endswith(("自治州", "地区", "盟")) else city):
+                    aliases[(province, alias)] = dict(province=province, city=city, district="",
+                        alias=alias, normalized_alias=normalize_region_text(alias), level="city")
+        return tuple(aliases.values())
 
 
 @lru_cache(maxsize=1)

@@ -3,7 +3,7 @@ import re
 from typing import Any
 
 from app.schemas.agent_schema import AgentAnalyzeRequest
-from app.schemas.product_schema import UserProfilePayload
+from app.tools.profile_context import current_qualification_profile
 from app.services.analysis_skill_service import load_skill_core
 
 
@@ -192,20 +192,7 @@ SCORE_RISK_PROMPT = """
 
 def build_current_profile_context(payload: AgentAnalyzeRequest) -> dict:
     """Send current decision constraints only, excluding arbitrary/private extras."""
-    raw = payload.profile.get("raw_profile_json")
-    stored = dict(raw) if isinstance(raw, dict) else {}
-    stored.update(payload.profile)
-    allowed = UserProfilePayload.model_fields.keys() - {"raw_profile_json", "filled_fields"}
-    profile = {key: value for key, value in stored.items() if key in allowed and value is not None}
-    # A temporary major/education change invalidates the saved catalog hierarchy.
-    previous_education = stored.get("education") or stored.get("education_level") or ""
-    if (str(stored.get("major") or "").strip() != payload.major.strip()
-            or str(previous_education).strip() != payload.education.strip()):
-        for key in ("major_code", "major_category", "major_discipline", "major_education"):
-            profile.pop(key, None)
-    # Temporary filters take precedence over the saved profile's basic fields.
-    profile.update(education=payload.education, education_level=payload.education,
-                   major=payload.major, identity=payload.identity)
+    profile = current_qualification_profile(payload.profile, payload.education, payload.major, payload.identity)
     return {
         "目标类型": payload.target, "考试类型": payload.exam_type, "招考年度": payload.year,
         "目标省份": payload.region, "目标城市": payload.city,
@@ -527,6 +514,8 @@ def _build_job_fact(job: dict) -> dict[str, Any]:
                 score_match_type == "exact_position_code" and min_score is not None
             ),
         },
+        "eligibility_status": job.get("eligibility_status") or "pending",
+        "eligibility_checks": job.get("eligibility_checks") or [],
         "risk_flags": list(job.get("risk_flags") or []),
         "risk_notes": [
             str(item)

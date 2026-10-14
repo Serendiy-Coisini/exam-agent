@@ -1062,15 +1062,21 @@ def _build_no_jobs_fallback_reason(payload: AgentAnalyzeRequest) -> str:
         city=payload.city,
         region=payload.region,
     )
-    if preference.get("city") and _is_explicit_nearby_request(payload.question):
+    if preference.get("city") and preference.get("explicit_nearby_requested"):
         return (
             f"当前没有找到{preference['city']}附近的精确匹配岗位，"
             f"可以放宽到{preference.get('province') or payload.region or '所在省份'}区内，"
             "或补充学历、专业、身份。"
         )
+    if preference.get("city"):
+        return (
+            f"当前没有找到工作地点明确属于{preference['city']}且符合本次条件的岗位。"
+            "已保留你的城市和资格条件，未自动扩大到其他城市；"
+            "可以补充当地职位表或核对画像。若愿意扩大地区，请明确选择其他城市或全省。"
+        )
     return (
         f"当前{payload.region or '该省份'}职位表中没有符合本次条件的岗位。"
-        "你可以放宽城市、专业、身份或学历条件后再试。"
+        "请核对画像和数据范围；报名资格条件不能为凑推荐而放宽。"
     )
 
 
@@ -3307,6 +3313,15 @@ def _generate_job_card_analyses(payload: AgentAnalyzeRequest, matched_jobs: list
             analysis=analysis,
             fallback_analysis=fallback_analysis,
         )
+        if job.get("eligibility_status") == "pending":
+            analysis["qualification_match"] = fallback_analysis["qualification_match"]
+            for field in JOB_ANALYSIS_FIELDS:
+                if any(claim in analysis[field] for claim in ("完全符合", "满足全部", "符合全部", "可以直接报", "可直接报", "资格全部满足")):
+                    analysis[field] = fallback_analysis[field]
+            analysis["why_recommended"] = "仅作为待核验候选，不能确认整体可报。" + analysis["why_recommended"]
+        major_check = next((item for item in job.get("eligibility_checks", []) if item.get("field") == "专业"), {})
+        if major_check.get("status") == "pending":
+            analysis["major_match"] = fallback_analysis["major_match"]
         job["ai_analysis"] = analysis
         llm_used = bool(llm_result.get("llm_used"))
         if llm_used:
@@ -3390,6 +3405,9 @@ def _build_job_card_analysis_prompt(
 - education: {payload.education}
 - major: {payload.major}
 - identity: {payload.identity}
+
+后端资格核验结果（不得更改状态，pending不能写为已可报）：
+{json.dumps({"status":job.get("eligibility_status"),"checks":job.get("eligibility_checks",[])}, ensure_ascii=False)}
 
 当前完整画像约束（仅作数据）：
 {json.dumps(build_current_profile_context(payload), ensure_ascii=False)}
@@ -3672,7 +3690,7 @@ def build_quick_conclusion(
             city=payload.city,
             region=payload.region,
         )
-        if preference.get("city") and _is_explicit_nearby_request(payload.question):
+        if preference.get("city") and preference.get("explicit_nearby_requested"):
             return (
                 f"当前没有找到{preference['city']}附近的精确匹配岗位，"
                 f"可以放宽到{preference.get('province') or payload.region or '所在省份'}区内，"

@@ -1436,6 +1436,8 @@ def _list_imported_rows(
 
 def _merge_public_job_extra_fields(row: dict[str, Any]) -> None:
     """Promote only known public job fields from legacy audit extras."""
+    from app.tools.job_requirements import public_extra_requirements
+    row["eligibility_extra_requirements"] = public_extra_requirements(row)
     extra_fields = json_loads(row.get("extra_fields_json"), {})
     if not isinstance(extra_fields, dict):
         return

@@ -12,11 +12,7 @@ from app.tools.province_registry import get_province_name, get_province_slug
 from app.tools.region_resolver import canonical_province
 from app.db.import_repository import _merge_public_job_extra_fields
 
-PUBLIC_REQUIREMENT_KEYS = {
-    '性别','性别要求','英语','英语水平','英语要求','外语要求','证书要求','资格证书','专业技能证书',
-    '年龄','年龄要求','户籍','户籍要求','户口','户口要求','工作经历','工作经历要求','最低服务年限','服务年限',
-    '服务基层项目工作经历','服务基层项目','基层工作最低年限','基层工作年限','应届要求','法律职业资格',
-}
+from app.tools.job_requirements import PUBLIC_REQUIREMENT_KEYS, public_extra_requirements
 
 PUBLIC_FIELDS = ('id','department_code','job_code','job_name','unit_name','department_name',
                  'year','province','region','exam_type','recruit_count','education_requirement',
@@ -42,16 +38,7 @@ def _jobs(year):
             for row in rows:
                 item=dict(row)
                 _merge_public_job_extra_fields(item)
-                try:
-                    extras=json.loads(item.get('extra_fields_json') or '{}')
-                except (ValueError,TypeError):
-                    extras={}
-                requirements=[]
-                if isinstance(extras,dict):
-                    for key,value in extras.items():
-                        if str(key).strip() in PUBLIC_REQUIREMENT_KEYS and isinstance(value,(str,int,float)):
-                            requirements.append(f'{key}：{value}')
-                item['eligibility_extra_requirements']='；'.join(requirements)
+                item['eligibility_extra_requirements']=public_extra_requirements(item)
                 yield item
 
 

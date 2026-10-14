@@ -199,6 +199,9 @@ class MatchedJob(BaseModel):
     suitability_score: int = 0
     match_score: int = 0
     match_level: str = ""
+    eligibility_status: str = "pending"
+    eligibility_checks: List[dict[str, Any]] = Field(default_factory=list)
+    major_restriction_level: str = "unknown"
     short_reason: str = ""
     recommendation_reason: str = ""
     risk_summary: str = ""
