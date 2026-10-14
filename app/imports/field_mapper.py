@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any
 
 from app.imports.interview_roster import OFFICIAL_CUTOFF_HEADERS
@@ -153,7 +154,7 @@ TABLE_STANDARD_FIELDS = {
 FIELD_ALIASES = {
     "job_table": {
         "department_code": ["部门代码", "招录机关代码", "招录部门代码"],
-        "year": ["年份", "年度"],
+        "year": ["招考年度", "招录年度", "考录年度", "招考年份", "年份", "年度"],
         "province": ["省份", "省", "地区"],
         "region": ["地区", "地市", "城市", "工作地点", "职位所在地", "考区"],
         "exam_type": ["考试类型", "招考类型"],
@@ -179,7 +180,7 @@ FIELD_ALIASES = {
     },
     "score_line_table": {
         "department_code": ["部门代码", "招录机关代码", "招录部门代码"],
-        "year": ["年份", "年度"],
+        "year": ["招考年度", "招录年度", "考录年度", "招考年份", "年份", "年度"],
         "province": ["省份", "省"],
         "region": ["地区", "地市", "城市", "考区"],
         "exam_type": ["考试类型", "招考类型"],
@@ -195,7 +196,7 @@ FIELD_ALIASES = {
     },
     "candidate_score_table": {
         "department_code": ["部门代码", "招录机关代码", "招录部门代码"],
-        "year": ["年份", "年度"],
+        "year": ["招考年度", "招录年度", "考录年度", "招考年份", "年份", "年度"],
         "province": ["省份", "省"],
         "region": ["地区", "地市", "城市", "考区"],
         "exam_type": ["考试类型", "招考类型"],
@@ -219,7 +220,7 @@ FIELD_ALIASES = {
     },
     "signup_table": {
         "department_code": ["部门代码", "招录机关代码", "招录部门代码"],
-        "year": ["年份", "年度"],
+        "year": ["招考年度", "招录年度", "考录年度", "招考年份", "年份", "年度"],
         "province": ["省份", "省"],
         "region": ["地区", "地市", "城市", "考区"],
         "exam_type": ["考试类型", "招考类型"],
@@ -551,7 +552,10 @@ def _match_header(
     normalized_header: str,
     alias_entries: list[tuple[str, str, str]],
 ) -> str:
+    calendar_year = bool(re.search(r'笔试年份|笔试年度|考试年份|考试日期|笔试日期|举行年份|发布年份|报名年份|面试年份|公告年份', normalized_header))
     for alias_normalized, target_field, _ in alias_entries:
+        if target_field == 'year' and calendar_year:
+            continue
         if normalized_header == alias_normalized:
             return target_field
 
@@ -559,6 +563,8 @@ def _match_header(
         return "min_score" if any(target == "min_score" for _, target, _ in alias_entries) else ""
 
     for alias_normalized, target_field, alias_text in alias_entries:
+        if target_field == 'year' and calendar_year:
+            continue
         if alias_text in BROAD_ALIASES:
             continue
         if normalized_header.endswith("代码") and not alias_normalized.endswith("代码"):

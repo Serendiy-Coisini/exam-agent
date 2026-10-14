@@ -87,3 +87,68 @@ test('national shortlist identity preserves department and position codes', () =
     assert.equal(c.normalizeJob(job).department_code, '001000');
     assert.notEqual(c.getJobKey(job), c.getJobKey({...job, department_code: '002000'}));
 });
+
+
+test('score recruitment years come from score datasets rather than job years or a fixed 2025',()=>{
+    const select={value:'2025',dataset:{},options:[],appendChild(option){this.options.push(option);},set innerHTML(value){this.options=[{value:''}];}};
+    const datasets=[{year:2026},{year:2024},{year:2026},{year:'invalid'}];
+    const c=load(['renderScoreYearOptions'],{
+        document:{getElementById:id=>id==='scoreYear'?select:{dataset:{}}},
+        getScoreLikeDatasets:()=>datasets,isValidCatalogYear:value=>Number.isInteger(Number(value))&&Number(value)>=1900&&Number(value)<=2100,
+        createOption:(value,label)=>({value:String(value),label}),refreshCustomSelect(){},markScoreFiltersDirty(){},currentRoute:'overview',scoreRequestId:0,
+    });
+    c.renderScoreYearOptions();
+    assert.equal(select.value,'2026');
+    assert.deepEqual(select.options.map(o=>o.value),['','2026','2024']);
+    select.value='';
+    c.renderScoreYearOptions();
+    assert.equal(select.value,'');
+});
+
+function scoreSearchContext(fetch){
+    const elements={};
+    const element=id=>elements[id]??={value:'',dataset:{},innerHTML:''};
+    const history=[];
+    const seen=[];
+    const c=load(['searchScoreReferences'],{
+        document:{getElementById:element},getValue:id=>element(id).value,fetch,URLSearchParams,
+        SCORE_REFERENCES_API_URL:'/api/v1/agent/score-references',authToken:'',scoreRequestId:0,
+        setButtonLoading(){},createLoadingPanel:String,readResponseError:async()=>'',
+        renderScoreResults:data=>seen.push(data.year),addAnalysisHistoryRecord:r=>history.push(r),
+        createErrorState:()=>'',showToast(){},console,
+    });
+    return {c,element,history,seen};
+}
+
+test('score query sends the selected recruitment year and stores that same year in history',async()=>{
+    let requested;
+    const {c,element:e,history}=scoreSearchContext(async url=>{
+        requested=url;return {ok:true,json:async()=>({year:2026,returned:1})};
+    });
+    e('scoreYear').value='2026';
+    await c.searchScoreReferences();
+    assert.equal(new URL(requested,'http://test').searchParams.get('year'),'2026');
+    assert.equal(Number(history[0].year),2026);
+    e('scoreYear').value='';
+    await c.searchScoreReferences();
+    assert.equal(new URL(requested,'http://test').searchParams.has('year'),false);
+    assert.equal(history[1].year,null);
+});
+
+test('a late score response for 2025 cannot replace the newer 2026 query',async()=>{
+    const resolvers=[];
+    const {c,element:e,seen}=scoreSearchContext(()=>new Promise(resolve=>resolvers.push(resolve)));
+    e('scoreYear').value='2025';const old=c.searchScoreReferences();
+    e('scoreYear').value='2026';const latest=c.searchScoreReferences();
+    resolvers[1]({ok:true,json:async()=>({year:2026,returned:1})});await latest;
+    resolvers[0]({ok:true,json:async()=>({year:2025,returned:1})});await old;
+    assert.deepEqual(seen,[2026]);
+});
+
+test('filename import prefers recruitment year when written exam calendar year appears first',()=>{
+    const c=load(['detectImportYear'],{});
+    for(const name of ['2025年11月笔试_2026年度国考面试人员名单.xlsx','2025笔试_2026国考分数线.xlsx','笔试2025_招考年度2026_国考成绩.xlsx'])
+        assert.equal(c.detectImportYear(name),'2026',name);
+    for(const name of ['2025年11月笔试成绩.xlsx','笔试年份2025_成绩表.csv'])
+        assert.equal(c.detectImportYear(name),'',name);
+});

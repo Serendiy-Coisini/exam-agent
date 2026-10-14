@@ -1603,7 +1603,11 @@ def _infer_exam_type(text: str) -> str | None:
 
 
 def _infer_score_line_year(file_name: str, raw_tables: list[RawTable]) -> int | None:
-    section_year = _infer_year(_collect_section_title_context(raw_tables))
+    titles = _collect_section_title_context(raw_tables)
+    recruitment_year = _infer_recruitment_year(titles) or _infer_recruitment_year(file_name)
+    if recruitment_year is not None:
+        return recruitment_year
+    section_year = _infer_year(titles)
     if section_year is not None:
         return section_year
     return _infer_year(file_name)
@@ -1622,7 +1626,21 @@ def _collect_section_title_context(raw_tables: list[RawTable]) -> str:
     return " ".join(parts)
 
 
+def _infer_recruitment_year(text: str) -> int | None:
+    for pattern in [r"(?<!\d)(20\d{2})\s*(?:年度|(?=国考)|年(?=国考|国家公务员|公务员招考|考试录用))",
+                    r"(?:招考年度|招录年度|考录年度|国考)\s*[:：]?\s*(20\d{2})(?!\d)"]:
+        match = re.search(pattern, text)
+        if match:
+            return int(match[1])
+    return None
+
+
 def _infer_year(text: str) -> int | None:
+    recruitment_year = _infer_recruitment_year(text)
+    if recruitment_year is not None:
+        return recruitment_year
+    # An explicitly dated written exam/publication is not a recruitment year.
+    text = re.sub(r"(?:笔试(?:年份|年度|时间|日期)?|考试(?:日期|时间)|(?:举行|发布)(?:年份|时间|日期)?)\s*[:：]?\s*20\d{2}|20\d{2}年?(?:\d{1,2}月(?:\d{1,2}日)?)?\s*(?:举行)?(?:笔试|发布)", "", text)
     full_year = re.search(r"(?<!\d)(20\d{2})(?!\d)", text)
     if full_year:
         return int(full_year.group(1))

@@ -81,7 +81,7 @@ IMPORT_TYPE_REGISTRY: dict[str, dict[str, Any]] = {
             "work_address",
         ],
         "at_least_one_groups": [],
-        "field_labels": COMMON_FIELD_LABELS,
+        "field_labels": {**COMMON_FIELD_LABELS, "year": "招考年度"},
     },
     "score_line_table": {
         "label": "进面分数线表",
@@ -99,7 +99,7 @@ IMPORT_TYPE_REGISTRY: dict[str, dict[str, Any]] = {
             "major_category",
         ],
         "at_least_one_groups": [],
-        "field_labels": COMMON_FIELD_LABELS,
+        "field_labels": {**COMMON_FIELD_LABELS, "year": "招考年度"},
     },
     "candidate_score_table": {
         "label": "笔试面试成绩汇总表",
@@ -121,7 +121,7 @@ IMPORT_TYPE_REGISTRY: dict[str, dict[str, Any]] = {
             "rank",
         ],
         "at_least_one_groups": [["total_score", "written_score", "interview_score"]],
-        "field_labels": COMMON_FIELD_LABELS,
+        "field_labels": {**COMMON_FIELD_LABELS, "year": "招考年度"},
     },
     "review_candidate_list": {
         "label": "资格复审人员名单",
@@ -169,7 +169,7 @@ IMPORT_TYPE_REGISTRY: dict[str, dict[str, Any]] = {
                 "candidate_name",
             ],
         ],
-        "field_labels": COMMON_FIELD_LABELS,
+        "field_labels": {**COMMON_FIELD_LABELS, "year": "招考年度"},
     },
     "signup_table": {
         "label": "报名 / 缴费人数表",
@@ -189,7 +189,7 @@ IMPORT_TYPE_REGISTRY: dict[str, dict[str, Any]] = {
             "competition_ratio",
         ],
         "at_least_one_groups": [],
-        "field_labels": COMMON_FIELD_LABELS,
+        "field_labels": {**COMMON_FIELD_LABELS, "year": "招考年度"},
     },
     "major_catalog": {
         "label": "专业目录表",

@@ -208,6 +208,7 @@ def get_agent_data_catalog() -> dict:
 
 @router.get("/score-references")
 def get_score_references(
+    year: int | None = Query(None, ge=1900, le=2100),
     province: str = Query(""),
     keyword: str = Query(""),
     position_code: str = Query(""),
@@ -217,6 +218,7 @@ def get_score_references(
 ) -> dict:
     """Search historical score references without exposing internal files."""
     return search_score_catalog(
+        year=year,
         province=province,
         keyword=keyword,
         position_code=position_code,

@@ -490,7 +490,7 @@
                             <div>
                                 <p class="eyebrow">Historical references</p>
                                 <h1 id="scoresTitle">分数线参考</h1>
-                                <p>查看已导入地区的历史进面分数据。</p>
+                                <p>按公告的招考年度查看历史进面分。2026 年度国考即使在 2025 年举行笔试，仍归入 2026 招考年度。</p>
                             </div>
                         </header>
 
@@ -503,8 +503,8 @@
                             <label>省份
                                 <select id="scoreProvince"><option value="">全部已导入省份</option></select>
                             </label>
-                            <label>年份
-                                <select id="scoreYear"><option value="2025">2025</option></select>
+                            <label>招考年度
+                                <select id="scoreYear"><option value="">全部招考年度</option></select>
                             </label>
                             <label>岗位 / 单位 / 地区关键词
                                 <input id="scoreKeyword" type="search" placeholder="岗位、单位、地区或分段标题">
@@ -670,8 +670,8 @@
                                             <option value="国考">国考</option>
                                         </select>
                                     </label>
-                                    <label>年份 year
-                                        <input id="importYear" name="year" type="number" inputmode="numeric" min="2000" max="2100" placeholder="自动识别或手动填写">
+                                    <label>年度 year
+                                        <input id="importYear" name="year" type="number" inputmode="numeric" min="2000" max="2100" placeholder="招考数据按公告招考年度填写，如 2026">
                                     </label>
                                 </div>
                                 <p id="importAutoDetectHint" class="import-auto-detect-hint" hidden></p>

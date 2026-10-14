@@ -53,7 +53,7 @@ const ROUTE_TITLES = {
 };
 
 const IMPORT_FIELD_LABELS = {
-    year: "年份",
+    year: "招考年度",
     province: "省份",
     region: "地区",
     exam_type: "考试类型",
@@ -269,6 +269,7 @@ let analysisHistory = loadStoredArray(ANALYSIS_HISTORY_STORAGE_KEY)
     .slice(0, ANALYSIS_HISTORY_LIMIT);
 let chatHistory = [];
 let dataCatalog = null;
+let scoreRequestId = 0;
 let jobRefCounter = 0;
 let analysisInFlight = false;
 let currentAbortController = null;
@@ -340,6 +341,8 @@ function bindGlobalEvents() {
 
     document.getElementById("singleJobForm")?.addEventListener("submit", handleSingleJobSubmit);
     document.getElementById("scoreFilterForm")?.addEventListener("submit", handleScoreFilterSubmit);
+    document.getElementById("scoreFilterForm")?.addEventListener("input", markScoreFiltersDirty);
+    document.getElementById("scoreFilterForm")?.addEventListener("change", markScoreFiltersDirty);
     document.getElementById("importUploadForm")?.addEventListener("submit", handleImportUpload);
     document.getElementById("importConfirmButton")?.addEventListener("click", handleImportConfirm);
     document.getElementById("importResetButton")?.addEventListener("click", resetImportForm);
@@ -1851,6 +1854,7 @@ function renderDataCatalog() {
             : "";
         refreshCustomSelect(scoreProvince);
     }
+    renderScoreYearOptions();
 }
 
 function renderDatasetLoadingState() {
@@ -1952,6 +1956,25 @@ function getScoreLikeDatasets() {
         return [];
     }
     return normalizeArray(dataCatalog.score_datasets);
+}
+
+function renderScoreYearOptions() {
+    const select = document.getElementById("scoreYear");
+    if (!select) return;
+    const selected = select.value;
+    const years = [...new Set(getScoreLikeDatasets().map(dataset => Number(dataset.year))
+        .filter(isValidCatalogYear))].sort((a, b) => b - a).map(String);
+    const initialized = select.dataset.yearsLoaded === "true";
+    select.innerHTML = '<option value="">全部招考年度</option>';
+    years.forEach(year => select.appendChild(createOption(year, `${year} 年度`)));
+    select.value = years.includes(selected) || (initialized && selected === "")
+        ? selected : (years[0] || "");
+    select.dataset.yearsLoaded = "true";
+    refreshCustomSelect(select);
+    if (selected !== select.value) {
+        markScoreFiltersDirty();
+        if (currentRoute === "scores") searchScoreReferences();
+    }
 }
 
 function getJobLikeDatasets() {
@@ -4484,7 +4507,7 @@ function normalizeAnalysisHistoryRecord(record) {
             display_position_code: record.related_position_code
         }),
         province: truncateText(sanitizeUserFacingText(record.province), 30),
-        year: Number(record.year) || 2025,
+        year: record.year == null || record.year === "" ? null : Number(record.year) || null,
         recommendation_count: Math.max(
             0,
             Math.min(Number(record.recommendation_count) || recommendedJobs.length, 5)
@@ -4832,7 +4855,7 @@ function applyImportMetaAutoDetect(fileName, options = {}) {
     }
     if (detected.year && (overwrite || !getValue("importYear") || getValue("importYear") === "2025")) {
         setValue("importYear", detected.year);
-        applied.push(`年份 ${detected.year}`);
+        applied.push(`招考年度 ${detected.year}`);
     }
 
     if (showHint) {
@@ -4881,7 +4904,12 @@ function detectImportExamType(text) {
 }
 
 function detectImportYear(text) {
-    const match = String(text || "").match(/(?:20)\d{2}/);
+    const value = String(text || "");
+    const annual = value.match(/(?<!\d)(20\d{2})\s*(?:年度|(?=国考)|年(?=国考|国家公务员|公务员招考|考试录用))/)
+        || value.match(/(?:招考年度|招录年度|考录年度|国考)\s*[:：]?\s*(20\d{2})(?!\d)/);
+    if (annual) return annual[1];
+    const fallback = value.replace(/(?:笔试(?:年份|年度|时间|日期)?|考试(?:日期|时间)|(?:举行|发布)(?:年份|时间|日期)?)\s*[:：]?\s*20\d{2}|20\d{2}年?(?:\d{1,2}月(?:\d{1,2}日)?)?\s*(?:举行)?(?:笔试|发布)/g, "");
+    const match = fallback.match(/(?:20)\d{2}/);
     return match ? match[0] : "";
 }
 
@@ -5173,7 +5201,7 @@ function renderImportSummary(data) {
         ["识别置信度", formatConfidence(data?.confidence)],
         ["数据粒度", formatImportGranularity(data?.data_granularity)],
         ["省份", data?.province || "未识别"],
-        ["年份", data?.year || "未识别"],
+        [data?.field_labels?.year || "年度", data?.year || "未识别"],
         ["考试类型", data?.exam_type || "未识别"],
         [isRoster ? "读取人员记录" : (data?.multi_output ? "读取源行" : "读取记录"), formatNumber(data?.total_rows)],
         [isRoster ? "汇总有效岗位" : (data?.multi_output ? "有效输出记录" : "有效记录"), formatNumber(data?.valid_rows)],
@@ -5875,6 +5903,18 @@ function getImportMappingFieldLabel(field) {
     return getImportFieldLabel(field);
 }
 
+function markScoreFiltersDirty() {
+    scoreRequestId += 1;
+    const container = document.getElementById("scoreResults");
+    if (container) {
+        delete container.dataset.loaded;
+        container.innerHTML = "";
+    }
+    const button = document.getElementById("scoreFilterButton");
+    if (button) setButtonLoading(button, false, "筛选记录");
+    setText("scoreResultSummary", "条件已更新，请按所选招考年度重新筛选。");
+}
+
 async function ensureScoreResultsLoaded() {
     const container = document.getElementById("scoreResults");
     if (container && !container.dataset.loaded) {
@@ -5888,6 +5928,8 @@ async function handleScoreFilterSubmit(event) {
 }
 
 async function searchScoreReferences() {
+    const requestId = ++scoreRequestId;
+    const selectedYear = getValue("scoreYear");
     const button = document.getElementById("scoreFilterButton");
     const container = document.getElementById("scoreResults");
     setButtonLoading(button, true, "筛选中…");
@@ -5895,6 +5937,7 @@ async function searchScoreReferences() {
 
     const params = new URLSearchParams();
     const values = {
+        year: selectedYear,
         province: getValue("scoreProvince"),
         keyword: getValue("scoreKeyword"),
         position_code: getValue("scorePositionCode"),
@@ -5912,6 +5955,7 @@ async function searchScoreReferences() {
             throw new Error(await readResponseError(response));
         }
         const data = await response.json();
+        if (requestId !== scoreRequestId) return;
         container.dataset.loaded = "true";
         renderScoreResults(data);
         addAnalysisHistoryRecord({
@@ -5921,15 +5965,16 @@ async function searchScoreReferences() {
                 ? `当前条件下展示 ${data.returned} 条历史分数参考。历史进面分不代表今年难度。`
                 : "当前条件下暂无分数线记录。",
             question: [
-                getValue("scoreProvince"),
-                getValue("scorePositionCode"),
-                getValue("scoreKeyword")
+                values.province,
+                values.position_code,
+                values.keyword
             ].filter(Boolean).join(" · "),
-            province: getValue("scoreProvince"),
-            year: getValue("scoreYear") || 2025,
+            province: values.province,
+            year: selectedYear ? Number(selectedYear) : null,
             status: data?.returned ? "完成" : "无结果"
         });
     } catch (error) {
+        if (requestId !== scoreRequestId) return;
         container.innerHTML = createErrorState(
             "分数线记录加载失败",
             "这次没有读取到历史分数记录，可以稍后重试。",
@@ -5941,14 +5986,14 @@ async function searchScoreReferences() {
             type: "error",
             title: "分数线参考加载失败",
             summary: "这次没有读取到历史分数记录，可以稍后重试。",
-            question: [getValue("scoreProvince"), getValue("scorePositionCode"), getValue("scoreKeyword")].filter(Boolean).join(" · "),
-            province: getValue("scoreProvince"),
-            year: getValue("scoreYear") || 2025,
+            question: [values.province, values.position_code, values.keyword].filter(Boolean).join(" · "),
+            province: values.province,
+            year: selectedYear ? Number(selectedYear) : null,
             status: "失败"
         });
         console.error("Score reference request failed:", error);
     } finally {
-        setButtonLoading(button, false, "筛选记录");
+        if (requestId === scoreRequestId) setButtonLoading(button, false, "筛选记录");
     }
 }
 
@@ -5957,7 +6002,7 @@ function renderScoreResults(data) {
     setText(
         "scoreResultSummary",
         items.length > 0
-            ? `共匹配 ${formatNumber(data.total)} 条成绩或分数线记录，本页展示前 ${formatNumber(data.returned)} 条。`
+            ? `${data?.year ? `${data.year} 招考年度` : "全部招考年度"}：共匹配 ${formatNumber(data.total)} 条成绩或分数线记录，本页展示前 ${formatNumber(data.returned)} 条。`
             : "当前条件下暂无成绩或分数线记录。"
     );
     const container = document.getElementById("scoreResults");
@@ -5988,7 +6033,7 @@ function renderScoreResultItem(item) {
     return `
         <article class="score-item">
             <div><span>记录类型</span><strong>${escapeHtml(item?.score_label || (isCandidateScore ? "候选人成绩" : "最低进面分"))}</strong></div>
-            <div><span>年份 / 省份</span><strong>${escapeHtml(formatScoreField(item.year))} · ${escapeHtml(formatScoreField(item.province))}</strong></div>
+            <div><span>招考年度 / 省份</span><strong>${escapeHtml(formatScoreField(item.year, " 年度"))} · ${escapeHtml(formatScoreField(item.province))}</strong></div>
             <div><span>用人单位</span><strong>${escapeHtml(formatScoreField(item.unit_name || item.unit || item.department))}</strong></div>
             <div><span>岗位名称</span><strong>${escapeHtml(formatScoreField(item.position_name || item.section_title))}</strong></div>
             <div><span>职位代码</span><strong>${escapeHtml(formatScoreField(getDisplayPositionCode(item)))}</strong></div>

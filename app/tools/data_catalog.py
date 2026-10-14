@@ -95,6 +95,7 @@ def search_score_catalog(
     min_score: float | None = None,
     max_score: float | None = None,
     limit: int = 100,
+    year: int | None = None,
 ) -> dict[str, Any]:
     """Search SQLite scores, with legacy CSV fallback only when SQLite is empty."""
     normalized_province = str(province or "").strip()
@@ -110,6 +111,7 @@ def search_score_catalog(
     for row in database_rows:
         if not _score_row_matches(
             row,
+            year=year,
             keyword=normalized_keyword,
             position_code=normalized_code,
             min_score=min_score,
@@ -132,6 +134,7 @@ def search_score_catalog(
                     normalized = _normalize_score_row(row, dataset_province)
                     if not _score_row_matches(
                         normalized,
+                        year=year,
                         keyword=normalized_keyword,
                         position_code=normalized_code,
                         min_score=min_score,
@@ -152,7 +155,8 @@ def search_score_catalog(
         reverse=True,
     )
     return {
-        "year": DEFAULT_DATA_YEAR,
+        "year": year,
+        "year_basis": "recruitment_year",
         "total": total_matches,
         "returned": len(results),
         "items": results[:safe_limit],
@@ -377,7 +381,10 @@ def _score_row_matches(
     position_code: str,
     min_score: float | None,
     max_score: float | None,
+    year: int | None = None,
 ) -> bool:
+    if year is not None and _optional_int(row.get("year")) != year:
+        return False
     if position_code and _normalize_position_code(row.get("position_code")) != position_code:
         return False
 
