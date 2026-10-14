@@ -167,6 +167,52 @@ def _certificates(clause, profile, found):
     return check('证书要求',combine(statuses,either=bool(ALTERNATIVE.search(clause))),clause,'仅按已填证书名称和明确等级核验；替代关系需人工核验')
 
 
+def _any_certificate_option(option, profile):
+    supplied = [normalized(value) for value in profile.get('certificates') or []]
+    # Keep professional names exact: international CPA qualifications are not
+    # interchangeable with the explicitly named domestic qualification.
+    law_a = re.fullmatch(r'(?:国家统一)?(?:法律职业资格|司法考试)(?:考试)?(?:证书|证)?\(?A(?:类证书|类|证书|证)?\)?', option, re.I)
+    if law_a:
+        checks, _ = consume_qualification_clause('法律职业资格A类', profile, {})
+        return combine(c['status'] for c in checks) if checks else 'pending'
+    for name, pattern in CERTIFICATES:
+        required = pattern.fullmatch(option)
+        if required:
+            recognized = [value for value in supplied if pattern.fullmatch(value)]
+            return _certificates(option, {**profile, 'certificates': recognized}, [(name, pattern, required)])['status']
+    aliases = {option}
+    parenthetical = re.findall(r'\(([^()]*)\)', option)
+    if parenthetical and all(re.fullmatch(r'[A-Za-z][A-Za-z0-9]{1,12}|[^()]+师', value) for value in parenthetical):
+        aliases.add(re.sub(r'\([^()]*\)', '', option))
+        aliases.update(parenthetical)
+    plain = lambda value: re.sub(r'(?:资格证书|资格证|证书)$', '', re.sub(r'\s+', '', value)).casefold()
+    if {plain(value) for value in supplied} & {plain(value) for value in aliases}:
+        return 'matched'
+    return 'unmet' if profile.get('certificates_reviewed') is True else 'pending'
+
+
+def _any_certificate_list(clause, profile):
+    group = re.fullmatch(r'(?:至少)?(?:须|必须)?(?:具有|具备|持有|取得)(.+)中的(?:任意)?一项(?:资质|资格|证书)(?:\(.*\))?', clause)
+    if not group or not any(pattern.search(clause) for _, pattern in CERTIFICATES):
+        return None
+    options, start, depth = [], 0, 0
+    for pos, char in enumerate(group[1]):
+        if char == '(':
+            depth += 1
+        elif char == ')':
+            depth -= 1
+        elif depth == 0 and char in '、,或':
+            options.append(group[1][start:pos].strip())
+            start = pos + 1
+    options.append(group[1][start:].strip())
+    if depth or not all(options) or re.search(r'且|同时|除|免|无需|不需|优先|建议|原则上', clause):
+        status = 'pending'
+    else:
+        status = combine((_any_certificate_option(option, profile) for option in options), either=True)
+    return check('证书要求', status, clause,
+                 '逐项核对列举资质，任一项符合即可；完整证书名单均未命中则不符合，资料或等级不明确保留待核验')
+
+
 def _comma_clauses(raw):
     """Separate independent comma clauses without splitting conditional OR lists."""
     parts, start, depth = [], 0, 0
@@ -199,15 +245,9 @@ def _remark_checks(text, profile, job=None):
             continue
         if re.fullmatch(r'无|无其他要求|无特殊要求|不限|男女不限|性别不限|不限性别',clause):
             continue
-        # An explicitly reviewed empty list rules out every certificate option,
-        # even when some option names are outside the automatic certificate map.
-        if (any(pattern.search(clause) for _, pattern in CERTIFICATES)
-                and re.fullmatch(r'(?:至少)?(?:须|必须)?(?:具有|具备|持有|取得).+中的(?:任意)?一项(?:资质|资格|证书)(?:\(.*\))?', clause)):
-            empty = (profile.get('certificates_reviewed') is True and not profile.get('certificates')
-                     and profile.get('law_a_certificate') is not True)
-            checks.append(check('证书要求', 'unmet' if empty else 'pending', clause,
-                                '岗位要求至少持有列举证书之一，画像已确认没有持有证书' if empty else
-                                '按整组任选证书核验，不能将单个证书作为必须持有项；证书名称及等级需核对'))
+        certificate_list = _any_certificate_list(clause, profile)
+        if certificate_list is not None:
+            checks.append(certificate_list)
             continue
         additional, remaining_clause = consume_qualification_clause(clause, profile, job or {})
         checks.extend(additional)

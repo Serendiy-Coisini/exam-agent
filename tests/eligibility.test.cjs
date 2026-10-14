@@ -122,3 +122,47 @@ test('the result summary identifies the rejected-only view',()=>{
     c.renderEligibilityResults({page:1,total_pages:1,total:10,scope_total:20,basic_candidate_count:8,items:[],counts:{matched:0,pending:10,unmet:10}});
     assert.doesNotMatch(e('eligibilitySummary').textContent,/正在查看.*被排除/);
 });
+
+
+test('reloading a changed profile clears prior qualifications and submits fresh fields',async()=>{
+    const sent=[];
+    const {c,element:e}=setup(async(url,options)=>{
+        sent.push(JSON.parse(options.body));
+        return {page:1,total_pages:0,items:[],counts:{matched:0,pending:0,unmet:0}};
+    });
+    Object.assign(c,{ALL_PROVINCES:['广东'],refreshCustomSelect(){},initializeCustomSelects(){}});
+    const profiles=[
+        {province:'广东',city:'深圳',exam_type:'国考',major:'软件工程',major_code:'080902',gender:'女',certificates:['注册会计师'],certificates_reviewed:true,cet4_score:425},
+        {province:'广东',city:'',exam_type:'国考',major:'网络工程',major_code:'080903',gender:'男',certificates:[],certificates_reviewed:true,cet4_score:0},
+        {province:'广东',city:'',exam_type:'国考',major:'软件工程',major_code:'080902',gender:'',certificates:[],certificates_reviewed:null,cet4_score:null},
+        {province:'广东',city:'深圳',exam_type:'国考',major:'软件工程',major_code:'080902',gender:'女',certificates:['注册会计师'],certificates_reviewed:true,cet4_score:425},
+    ];
+    for(const profile of profiles){
+        c.userProfile=profile;
+        e('eligibilityResults').innerHTML='old results';
+        c.initializeEligibilityPage();
+        assert.equal(e('eligibilityResults').innerHTML,'');
+        assert.equal(e('eligibilityNext').disabled,true);
+        c.handleEligibilitySubmit({preventDefault(){}});
+        await Promise.resolve();
+        const actual=sent.at(-1);
+        for(const field of ['major','major_code','gender','certificates','certificates_reviewed','cet4_score'])
+            assert.deepEqual(actual.profile[field],profile[field],field);
+        assert.equal(actual.city,profile.city);
+    }
+});
+
+test('a result for the old profile cannot reappear after profile reload',async()=>{
+    let resolveOld;
+    const {c,element:e}=setup(()=>new Promise(resolve=>{resolveOld=resolve;}));
+    Object.assign(c,{ALL_PROVINCES:['广东'],refreshCustomSelect(){},initializeCustomSelects(){}});
+    vm.runInContext("eligibilityQuery={profile:{gender:'女'}}",c);
+    const pending=c.fetchEligibilityPage(1);
+    c.userProfile={province:'广东',gender:'男',certificates:[]};
+    c.initializeEligibilityPage();
+    resolveOld({page:1,total_pages:1,items:[{job_name:'old female-only job'}],counts:{matched:1,pending:0,unmet:0}});
+    await pending;
+    assert.equal(e('eligibilityResults').innerHTML,'');
+    assert.equal(e('eligibilityGender').value,'男');
+    assert.equal(e('eligibilityPageInfo').textContent,'尚未查询');
+});
