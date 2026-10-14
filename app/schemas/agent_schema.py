@@ -31,6 +31,7 @@ class CurrentJobContext(BaseModel):
     political_requirement: str = ""
     grassroots_requirement: str = ""
     qualification_requirement: str = ""
+    eligibility_extra_requirements: str = ""
     agency_level: str = ""
     is_public_service: str = ""
     is_law_enforcement: str = ""
@@ -105,6 +106,8 @@ class AgentAnalyzeRequest(BaseModel):
     session_id: Optional[int] = Field(None, ge=1)
     profile: dict[str, Any] = Field(default_factory=dict)
     save_history: bool = False
+    selection_plan: dict[str, Any] = Field(default_factory=dict)
+    selection_constraints: dict[str, Any] = Field(default_factory=dict)
 
 
 class PolicySource(BaseModel):
@@ -173,6 +176,7 @@ class MatchedJob(BaseModel):
     political_requirement: str = ""
     grassroots_requirement: str = ""
     qualification_requirement: str = ""
+    eligibility_extra_requirements: str = ""
     agency_level: str = ""
     is_public_service: str = ""
     is_law_enforcement: str = ""
@@ -199,6 +203,8 @@ class MatchedJob(BaseModel):
     suitability_score: int = 0
     match_score: int = 0
     match_level: str = ""
+    query_scope_warning: str = ""
+    selection_decision: dict[str, Any] = Field(default_factory=dict)
     eligibility_status: str = "pending"
     eligibility_checks: List[dict[str, Any]] = Field(default_factory=list)
     major_restriction_level: str = "unknown"
@@ -352,3 +358,4 @@ class AgentAnalyzeResponse(BaseModel):
     message_id: Optional[int] = None
     agent_run_id: Optional[int] = None
     persistence_warnings: List[str] = Field(default_factory=list)
+    analysis_metadata: dict[str, Any] = Field(default_factory=dict)

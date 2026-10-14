@@ -185,6 +185,7 @@ def build_assistant_metadata(response: Any) -> dict[str, Any]:
     return sanitize_for_storage(
         {
             "recommendation_count": data.get("recommendation_count") or len(jobs),
+            "analysis_metadata": data.get("analysis_metadata") or {},
             "recommended_jobs": [
                 {
                     "job_id": job.get("job_id"),

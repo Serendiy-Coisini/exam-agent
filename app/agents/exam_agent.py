@@ -18,9 +18,13 @@ from app.db.import_repository import (
     get_review_score_summary_by_job,
     list_imported_jobs,
 )
-from app.services.llm_service import generate_llm_chat, generate_llm_json, generate_llm_summary
-from app.tools.job_category import extract_job_category_preference, is_category_job_search, job_categories
-from app.tools.job_tool import extract_location_preference, find_single_job, search_jobs
+from app.services.llm_service import generate_llm_chat, generate_llm_json, generate_llm_summary, model_stage
+from app.services.analysis_grounding_service import ground_card, ground_report
+from app.services.analyst_result_service import qualify_jobs, qualification_summary, analysis_metadata
+from app.services.selection_decision_service import select_candidates, candidate_pool_limit
+from app.tools.selection_plan import apply_selection_plan
+from app.tools.job_category import extract_job_category_preference, is_category_job_search, job_categories, matches_job_category
+from app.tools.job_tool import extract_location_preference, find_single_job, find_job_by_identity, search_jobs
 from app.tools.policy_tool import ask_help_policy_question, search_job_policy_sources
 from app.tools.province_registry import (
     has_jobs_csv,
@@ -30,7 +34,7 @@ from app.tools.province_registry import (
 )
 from app.tools.region_resolver import canonical_province, resolve_region
 from app.tools.risk_tool import analyze_risks
-from app.tools.score_tool import attach_scores_to_jobs, find_single_score_reference, search_scores
+from app.tools.score_tool import attach_scores_to_jobs, find_single_score_reference, search_scores, select_score_references
 
 
 SINGLE_JOB_NOT_FOUND_MESSAGE = (
@@ -74,6 +78,10 @@ JOB_ANALYSIS_FIELDS = [
 
 
 def _decide_llm_first(payload: AgentAnalyzeRequest, requested_position_code: str) -> dict:
+    planned = (payload.selection_plan or {}).get("intent")
+    intents = {"recommendation":"job_recommendation", "detail":"single_job_query", "score":"score_or_risk_query", "policy":"policy_qa"}
+    if planned in intents:
+        return {"intent":intents[planned], "llm_used":False, "used_tools":[], "planning_source":"selection_plan"}
     fallback = _fallback_agent_decision(payload, requested_position_code)
     if (
         _is_selection_strategy_question(payload.question)
@@ -567,7 +575,7 @@ def _build_response_debug(
 ) -> dict[str, Any]:
     requested_province = resolve_requested_province(
         region=payload.region,
-        question=payload.question,
+        question="",
     )
     slug = requested_province.get("slug", "")
     province = requested_province.get("province", "") or canonical_province(payload.region)
@@ -947,6 +955,7 @@ def _prepare_job_response_fields(
             year=job.get("year") or job.get("job_source_year"),
             province=province,
             target=job.get("target") or payload.target,
+            exam_type=job.get("exam_type") or payload.exam_type,
         )
         job["score_data_source_label"] = _friendly_score_data_source_label(
             year=job.get("score_source_year") or job.get("year"),
@@ -1026,12 +1035,18 @@ def _friendly_job_data_source_label(
     year: Any,
     province: str,
     target: str,
+    exam_type: str = "",
 ) -> str:
-    source_year = _safe_int(year) or 2025
+    source_year = _safe_int(year)
+    year_label = f"{source_year} 年度" if source_year else "年度待核验"
     source_province = province or "当前地区"
     if "事业" in str(target or ""):
-        return f"{source_year} 年{source_province}事业单位招聘职位表"
-    return f"{source_year} 年{source_province}公务员考试职位表"
+        return f"{year_label}{source_province}事业单位招聘职位表"
+    if "国考" in str(exam_type or ""):
+        return f"{year_label}国考职位表（工作地区：{source_province}）"
+    if "省考" in str(exam_type or ""):
+        return f"{year_label}{source_province}省考职位表"
+    return f"{year_label}公务员职位表（工作地区：{source_province}；考试类型待核验）"
 
 
 def _friendly_score_data_source_label(
@@ -1063,8 +1078,9 @@ def _build_no_jobs_fallback_reason(payload: AgentAnalyzeRequest) -> str:
         question=payload.question,
         city=payload.city,
         region=payload.region,
+        scope_resolved=True,
     )
-    category = extract_job_category_preference(payload.question)
+    category = (payload.selection_constraints or {}).get("category_preference") or extract_job_category_preference(payload.question)
     if any(category.values()):
         scope = preference.get("city") or preference.get("province") or payload.region or "本次地区"
         labels = "、".join(category["include"])
@@ -1094,44 +1110,8 @@ def _build_no_jobs_fallback_reason(payload: AgentAnalyzeRequest) -> str:
 
 
 def _apply_question_region(payload: AgentAnalyzeRequest) -> AgentAnalyzeRequest:
-    question_region = resolve_region(payload.question)
-    requested_province = resolve_requested_province(
-        region=payload.region,
-        question=payload.question,
-    )
-    question_province = (
-        requested_province.get("province", "")
-        or canonical_province(question_region.get("province", ""))
-    )
-    updates: dict[str, str] = {}
-    current_province = canonical_province(payload.region)
-    question_city = question_region.get("city", "")
-    if requested_province.get("source") == "question" or question_region.get("province"):
-        if question_province:
-            updates["region"] = question_province
-        if current_province and question_province and current_province != question_province:
-            updates["city"] = question_city
-        elif question_city:
-            updates["city"] = question_city
-    elif question_city:
-        updates["city"] = question_city
-
-    question_education = _extract_question_education(payload.question)
-    question_major = _extract_question_major(payload.question)
-    question_identity = _extract_question_identity(payload.question)
-    if question_education:
-        updates["education"] = question_education
-    if question_major:
-        updates["major"] = question_major
-    if question_identity:
-        updates["identity"] = question_identity
-
-    if not updates:
-        return payload
-    if hasattr(payload, "model_copy"):
-        return payload.model_copy(update=updates)
-    return payload.copy(update=updates)
-
+    """Apply request-local semantic conditions without rewriting facts from job mentions."""
+    return apply_selection_plan(payload)
 
 def _extract_question_education(question: str) -> str:
     text = "".join(str(question or "").split())
@@ -1229,10 +1209,17 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
     生成风险提醒、构建提示词、调用大模型生成总结。
     """
     trace: list[dict[str, Any]] = []
+    payload = _apply_question_region(payload)
+    planned_intent = payload.selection_plan.get("intent")
+    intent_modes = {"recommendation":"job_recommendation", "detail":"single_job_query", "score":"score_or_risk_query", "policy":"policy_qa"}
+    if planned_intent in intent_modes:
+        payload = payload.model_copy(update={"mode":intent_modes[planned_intent]})
 
-    requested_position_code = _extract_requested_position_code(payload.question)
+    requested_position_code = payload.selection_plan.get("position_code") or _extract_requested_position_code(payload.question)
     current_job = _resolve_current_job_context(payload)
     references_current_job = _references_current_job(payload.question)
+    if requested_position_code and requested_position_code != _normalize_position_code((current_job or {}).get("position_code")):
+        references_current_job = False
     mode = _normalize_mode(payload.mode)
     decision = _decide_llm_first(payload, requested_position_code)
     decision_intent = _normalize_decision_intent(decision.get("intent"))
@@ -1245,7 +1232,7 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
         step=1,
         name="LLM-first intent planning",
         tool="llm_service.generate_llm_json",
-        status="success" if decision.get("llm_used") else "warning",
+        status="success" if decision.get("llm_used") else ("skipped" if decision.get("planning_source") else "warning"),
         input_data={
             "mode": mode,
             "question": payload.question,
@@ -1254,7 +1241,7 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
         output_summary=(
             f"LLM-first intent={decision_intent}, tools={decision.get('used_tools') or []}."
             if decision.get("llm_used")
-            else f"Fallback intent={decision_intent}; LLM planner unavailable."
+            else (f"已按当前问题的结构化条件识别 {decision_intent}，无需重复模型规划。" if decision.get("planning_source") else f"规则识别意图为 {decision_intent}。")
         ),
     )
 
@@ -1421,8 +1408,7 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
             trace=trace,
         )
 
-    payload = _apply_question_region(payload)
-    missing_jobs_region_message = _missing_jobs_region_message(payload.region, payload.question)
+    missing_jobs_region_message = _missing_jobs_region_message(payload.region)
     if missing_jobs_region_message:
         _add_trace(
             trace=trace,
@@ -1484,7 +1470,25 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
         limit=result_limit,
         year=payload.year,
         profile=payload.profile,
+        selection_constraints=payload.selection_constraints,
+        candidate_pool_limit=candidate_pool_limit(),
+        scope_resolved=True,
     )
+    total_candidates = int(matched_jobs[0].pop("_eligible_candidate_count", len(matched_jobs))) if matched_jobs else 0
+    # Compare the full bounded pool with its available historical evidence.
+    score_references = search_scores(
+        target=payload.target, exam_type=payload.exam_type, region=payload.region,
+        major=payload.major, matched_jobs=matched_jobs, limit=len(matched_jobs),
+    ) if matched_jobs else []
+    attach_scores_to_jobs(matched_jobs, score_references)
+    _attach_score_samples_to_jobs(payload, matched_jobs)
+    matched_jobs, selection = select_candidates(payload, matched_jobs, result_limit)
+    selection["total_qualified_candidates"] = total_candidates
+    selection["pool_truncated"] = total_candidates > selection.get("pool_count", 0)
+    _add_trace(trace, 2, "按选岗方法比较候选", "selection_decision_service.select_candidates",
+        "success" if selection.get("model_used") else "skipped",
+        {"candidate_count":total_candidates,"compared_count":selection.get("compared_count",0),"pool_limit":selection.get("pool_limit"),"skill_applied":selection.get("skill_applied",False)},
+        "模型已按当前偏好和岗位证据比较候选。" if selection.get("model_used") else "本次使用规则候选顺序："+selection.get("fallback_reason",selection.get("reason","")))
     _add_trace(
         trace=trace,
         step=2,
@@ -1506,37 +1510,18 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
         output_summary=_build_job_trace_summary(matched_jobs),
     )
 
-    if not matched_jobs and any(extract_job_category_preference(payload.question).values()):
+    if not matched_jobs:
         message = _build_no_jobs_fallback_reason(payload)
         return AgentAnalyzeResponse(
             intent="job_recommendation", summary=message, analysis_report=message,
             matched_jobs=[], recommendations=[], risks=[], trace=trace,
             tool_used=True, used_tools=["job_tool.search_jobs"],
-            llm_used=bool(decision.get("llm_used")),
+            llm_used=False, analysis_metadata=analysis_metadata(payload,selection=selection),
             **_build_response_debug(payload=payload, matched_jobs=[], recommendation_count=0, fallback_reason=message),
         )
 
-    score_lookup_jobs = _with_requested_position_code(
-        matched_jobs=matched_jobs,
-        payload=payload,
-        requested_position_code=recommendation_position_code,
-    )
-    score_references = search_scores(
-        target=payload.target,
-        exam_type=payload.exam_type,
-        region=payload.region,
-        major=payload.major,
-        matched_jobs=score_lookup_jobs,
-    )
-    if recommendation_position_code:
-        score_references = [
-            score
-            for score in score_references
-            if _normalize_position_code(score.get("position_code")) == recommendation_position_code
-        ]
-    attach_scores_to_jobs(matched_jobs, score_references)
-    score_references = _public_score_references(score_references)
-    _attach_score_samples_to_jobs(payload, matched_jobs)
+    score_references = _public_score_references(
+        select_score_references(matched_jobs, score_references))
     matched_jobs = _ensure_requested_position_result(
         payload=payload,
         matched_jobs=matched_jobs,
@@ -1564,19 +1549,36 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
         output_summary=_build_score_trace_summary(payload, score_references),
     )
 
-    job_analysis_llm_count = _generate_job_card_analyses(payload, recommendations)
+    job_analysis_llm_count = 0
+    for job in recommendations:
+        fallback = _fallback_job_analysis(job)
+        batch_decision = job.get("selection_decision") or {}
+        candidate_analysis = dict(fallback)
+        if selection.get("model_used"):
+            candidate_analysis["why_recommended"] = batch_decision.get("rationale") or fallback["why_recommended"]
+            candidate_analysis["direction_fit"] = batch_decision.get("tradeoff") or fallback["direction_fit"]
+            clean, grounded = ground_card(payload,job,candidate_analysis,fallback)
+            job["ai_analysis"] = clean
+            batch_decision["rationale"] = clean["why_recommended"]
+            batch_decision["tradeoff"] = clean["direction_fit"]
+            batch_decision["grounding"] = grounded
+            job_analysis_llm_count += int(grounded.get("accepted",False))
+        else:
+            job["ai_analysis"] = fallback
+        _apply_job_analysis_metadata(job,llm_used=bool(selection.get("model_used")),model=selection.get("model",""),error=selection.get("fallback_reason",""))
+    selection["decisions"] = [job.get("selection_decision") or {} for job in recommendations]
     _add_trace(
         trace=trace,
         step=4,
-        name="岗位展开分析",
-        tool="llm_service.generate_llm_json",
+        name="岗位证据与取舍",
+        tool="analysis_grounding_service.ground_card",
         status="success" if job_analysis_llm_count else "warning",
         input_data={
             "matched_job_count": recommendation_count,
             "llm_analysis_count": job_analysis_llm_count,
         },
         output_summary=(
-            f"已使用大模型生成 {job_analysis_llm_count} 条岗位展开分析。"
+            f"已采纳并核验 {job_analysis_llm_count} 条批量岗位比较依据，无逐卡重复模型调用。"
             if job_analysis_llm_count
             else "岗位展开分析使用规则兜底；LLM 未配置或调用失败。"
         ),
@@ -1670,11 +1672,10 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
         output_summary=f"已构建大模型提示词，长度约 {len(prompt)} 个字符。",
     )
 
-    llm_result = generate_llm_summary(
-        prompt=prompt,
-        fallback_report=fallback_report,
-        use_skill=use_public_method(payload),
-    )
+    with model_stage("report"):
+        llm_result = generate_llm_summary(
+            prompt=prompt, fallback_report=fallback_report, use_skill=use_public_method(payload),
+        )
     analysis_report = _ensure_analysis_report(
         llm_result=llm_result,
         fallback_report=fallback_report,
@@ -1685,13 +1686,10 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
         score_references=score_references,
         sources=policy_result.get("sources", []),
     )
-    analysis_report = _enforce_recommendation_report_accuracy(
-        report=analysis_report,
-        payload=payload,
-        matched_jobs=recommendations,
-        recommendation_count=recommendation_count,
-        fallback_report=fallback_report,
-    )
+    analysis_report, report_grounding = ground_report(payload,recommendations,analysis_report,fallback_report)
+    if not llm_result.get("llm_used"):
+        report_grounding = {"source":"rules","accepted":False,"reasons":[llm_result.get("failure_reason") or llm_result.get("error") or "model_unavailable"],"repaired_fields":[]}
+    run_metadata = analysis_metadata(payload,llm_result,report_grounding,selection)
     analysis_report = _append_job_policy_context(analysis_report, policy_result)
     analysis_report = _sanitize_user_facing_text(analysis_report)
     quick_conclusion = build_quick_conclusion(
@@ -1704,14 +1702,15 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
         step=8,
         name="LLM 分析总结",
         tool="llm_service.generate_llm_summary",
-        status="success" if llm_result.get("llm_used") else "warning",
+        status="success" if run_metadata["report"].get("accepted") else "warning",
         input_data={
+            "output_source":run_metadata["output_source"], "grounding_reasons":run_metadata["report"].get("reasons",[]),
             "llm_configured": bool(llm_result.get("llm_used")),
         },
         output_summary=(
-            "已使用大模型生成自然语言分析报告。"
-            if llm_result.get("llm_used")
-            else llm_result.get("error", "未使用大模型，已返回规则版总结。")
+            "已采纳通过事实核验的模型正文。"
+            if run_metadata["report"].get("accepted")
+            else "正文使用规则结果："+"；".join(run_metadata["report"].get("reasons") or ["model_unavailable"])
         ),
     )
 
@@ -1727,7 +1726,8 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
         rag_answer=_public_policy_answer(policy_result),
         matched_jobs=recommendations,
         score_references=score_references,
-        llm_used=bool(llm_result.get("llm_used") or decision.get("llm_used") or job_analysis_llm_count),
+        llm_used=bool(run_metadata["report"].get("accepted") or selection.get("model_used")),
+        analysis_metadata=run_metadata,
         tool_used=True,
         used_tools=[
             "job_tool.search_jobs",
@@ -1757,7 +1757,19 @@ def _analyze_current_job_request(
     trace: list[dict[str, Any]],
     current_job: dict,
 ) -> AgentAnalyzeResponse:
-    job = _build_current_job_record(payload, current_job)
+    # Reload qualification facts by the card's identity, independently of new destination preferences.
+    lookup = find_job_by_identity(current_job)
+    if lookup.get("status") == "found":
+        record = lookup["job"]
+        references = search_scores(target=payload.target, exam_type=record.get("exam_type") or payload.exam_type,
+            region=record.get("province") or record.get("region") or payload.region,
+            major=payload.major, matched_jobs=[record])
+        attach_scores_to_jobs([record], references)
+        _attach_score_samples_to_jobs(payload, [record])
+    else:
+        record = _build_current_job_record(payload, current_job)
+        record["qualification_evidence_incomplete"] = True
+    job = qualify_jobs(payload, [record])[0]
     report = _build_current_job_analysis_report(payload, job)
     score_references = _build_current_job_score_references(job)
     _add_trace(
@@ -1883,7 +1895,7 @@ def _build_current_job_record(payload: AgentAnalyzeRequest, current_job: dict) -
     result = {
         "job_id": f"{current_job['department_code']}-{position_code}" if current_job.get("department_code") else (position_code or "current-job-context"),
         "department_code": current_job.get("department_code") or "",
-        "year": _safe_int(current_job.get("year")) or 2025,
+        "year": _safe_int(current_job.get("year")) or payload.year or 0,
         "target": payload.target,
         "exam_type": current_job.get("exam_type") or payload.exam_type,
         "region": region,
@@ -1907,6 +1919,7 @@ def _build_current_job_record(payload: AgentAnalyzeRequest, current_job: dict) -
         "political_requirement": current_job.get("political_requirement") or "",
         "grassroots_requirement": current_job.get("grassroots_requirement") or "",
         "qualification_requirement": current_job.get("qualification_requirement") or "",
+        "eligibility_extra_requirements": current_job.get("eligibility_extra_requirements") or "",
         "agency_level": current_job.get("agency_level") or "",
         "is_public_service": current_job.get("is_public_service") or "",
         "is_law_enforcement": current_job.get("is_law_enforcement") or "",
@@ -2036,10 +2049,7 @@ def _current_job_direct_conclusion(job: dict) -> str:
 
 
 def _build_current_job_analysis_report(payload: AgentAnalyzeRequest, job: dict) -> str:
-    qualification = (
-        "先逐项核对学历、专业、身份和岗位备注。"
-        "当前卡片只能用于分析，不能替代官方资格审查。"
-    )
+    qualification = qualification_summary(job)
     min_score = _safe_optional_float(job.get("min_score"))
     score_match_type = str(job.get("score_match_type") or "no_match")
     score_source_type = str(job.get("score_source_type") or "")
@@ -2124,6 +2134,7 @@ def _analyze_single_job_request(
         city=payload.city,
         query=payload.question,
         year=payload.year,
+        scope_resolved=True,
     )
     _add_trace(
         trace=trace,
@@ -2246,8 +2257,30 @@ def _build_single_job_response(
     is_context_followup: bool = False,
 ) -> AgentAnalyzeResponse:
     score_references = _public_score_references(score_references)
-    matched_jobs = _prepare_job_response_fields(payload, matched_jobs)
-    job_analysis_llm_count = _generate_job_card_analyses(payload, matched_jobs) if matched_jobs else 0
+    matched_jobs = qualify_jobs(payload,_prepare_job_response_fields(payload, matched_jobs))
+    if matched_jobs and matched_jobs[0].get("eligibility_status")=="unmet":
+        summary = qualification_summary(matched_jobs[0])
+    fallback_report = analysis_report or summary
+    if matched_jobs:
+        fallback_report = _build_current_job_analysis_report(payload, matched_jobs[0])
+    llm_result = {"analysis_report":fallback_report,"llm_used":False}
+    grounding = {"source":"rules","accepted":False,"reasons":["no_job"]}
+    if matched_jobs:
+        facts = {"question":payload.question,"current_profile":build_current_profile_context(payload),
+                 "jobs":matched_jobs,"task":"回答当前问题，依据已给出的逐项资格核验说明能否报考及岗位取舍；不得更改事实。"}
+        with model_stage("report"):
+            llm_result = generate_llm_chat(system_prompt=build_free_chat_system_prompt(use_skill=use_public_method(payload)),
+                messages=[{"role":"user","content":json.dumps(facts,ensure_ascii=False)}],
+                fallback_report=fallback_report,temperature=0.2)
+        analysis_report, grounding = ground_report(payload,matched_jobs,llm_result.get("analysis_report") or fallback_report,fallback_report)
+        if not llm_result.get("llm_used"):
+            grounding = {"source":"rules","accepted":False,"reasons":[llm_result.get("failure_reason") or "model_unavailable"]}
+        checks_text = "\n\n资格核验：\n"+qualification_summary(matched_jobs[0])
+        if checks_text.strip() not in analysis_report:
+            analysis_report += checks_text
+        if matched_jobs[0].get("query_scope_warning"):
+            analysis_report += "\n\n"+matched_jobs[0]["query_scope_warning"]
+    run_metadata = analysis_metadata(payload,llm_result,grounding)
     policy_result = search_job_policy_sources(payload, matched_jobs)
     policy_tool_used = policy_result.get("status") != "skipped"
     if policy_tool_used:
@@ -2278,7 +2311,8 @@ def _build_single_job_response(
         rag_answer=_public_policy_answer(policy_result),
         matched_jobs=matched_jobs,
         score_references=score_references,
-        llm_used=bool(job_analysis_llm_count),
+        llm_used=bool(llm_result.get("llm_used") and grounding.get("accepted")),
+        analysis_metadata=run_metadata,
         tool_used=policy_tool_used,
         used_tools=(
             ["policy_tool.search_job_policy_sources"]
@@ -2368,6 +2402,13 @@ def _analyze_score_or_risk_request(
             matched_jobs=[],
         )
     )
+    category = extract_job_category_preference(payload.question)
+    location = extract_location_preference("",city=payload.city,region=payload.region)
+    explicit_year = payload.selection_plan.get("updates",{}).get("year")
+    from app.tools.job_tool import _matches_recommendation_city
+    score_references = [row for row in score_references
+        if matches_job_category(row,category) and _matches_recommendation_city(row,location)
+        and (not explicit_year or int(row.get("year") or 0)==explicit_year)]
     score_line_count = sum(
         1 for item in score_references if item.get("is_min_score_reference") is not False
     )
@@ -3303,50 +3344,20 @@ def _set_job_position_code_fields(job: dict, position_code: str) -> None:
     job["full_position_code"] = code
 
 
-def _generate_job_card_analyses(payload: AgentAnalyzeRequest, matched_jobs: list[dict]) -> int:
-    llm_count = 0
+def _generate_job_card_analyses(payload, matched_jobs):
+    """Legacy single-card helper; main routes use batch decisions and one visible report."""
+    count = 0
     for job in matched_jobs:
-        if job.get("data_error"):
-            _apply_job_analysis_metadata(job, llm_used=False, model="", error="")
-            continue
-
-        fallback_analysis = _fallback_job_analysis(job)
-        llm_result = generate_llm_json(
-            prompt=_build_job_card_analysis_prompt(payload, job, fallback_analysis),
-            fallback_data=fallback_analysis,
-            analysis_system_prompt=build_job_card_system_prompt(use_skill=use_public_method(payload)),
-        )
-        analysis = {
-            field: _clean_job_analysis_text(llm_result.get(field)) or fallback_analysis[field]
-            for field in JOB_ANALYSIS_FIELDS
-        }
-        analysis = _enforce_job_analysis_accuracy(
-            payload=payload,
-            job=job,
-            analysis=analysis,
-            fallback_analysis=fallback_analysis,
-        )
-        if job.get("eligibility_status") == "pending":
-            analysis["qualification_match"] = fallback_analysis["qualification_match"]
-            for field in JOB_ANALYSIS_FIELDS:
-                if any(claim in analysis[field] for claim in ("完全符合", "满足全部", "符合全部", "可以直接报", "可直接报", "资格全部满足")):
-                    analysis[field] = fallback_analysis[field]
-            analysis["why_recommended"] = "仅作为待核验候选，不能确认整体可报。" + analysis["why_recommended"]
-        major_check = next((item for item in job.get("eligibility_checks", []) if item.get("field") == "专业"), {})
-        if major_check.get("status") == "pending":
-            analysis["major_match"] = fallback_analysis["major_match"]
-        job["ai_analysis"] = analysis
-        llm_used = bool(llm_result.get("llm_used"))
-        if llm_used:
-            llm_count += 1
-        _apply_job_analysis_metadata(
-            job,
-            llm_used=llm_used,
-            model=str(llm_result.get("model") or ""),
-            error=str(llm_result.get("error") or ""),
-        )
-    return llm_count
-
+        fallback = _fallback_job_analysis(job)
+        with model_stage("card",reserve_seconds=30):
+            result = generate_llm_json(prompt=_build_job_card_analysis_prompt(payload,job,fallback),
+                fallback_data=fallback,analysis_system_prompt=build_job_card_system_prompt(use_skill=use_public_method(payload)))
+        clean, grounded = ground_card(payload,job,result,fallback)
+        job["ai_analysis"] = clean
+        used = bool(result.get("llm_used") and grounded.get("accepted"))
+        count += int(used)
+        _apply_job_analysis_metadata(job,llm_used=used,model=result.get("model", ""),error="；".join(grounded.get("reasons") or []))
+    return count
 
 def _fallback_job_analysis(job: dict) -> dict:
     existing = job.get("ai_analysis") if isinstance(job.get("ai_analysis"), dict) else {}
@@ -3465,37 +3476,8 @@ def _clean_job_analysis_text(value: Any) -> str:
     return _sanitize_user_facing_text(value)
 
 
-def _enforce_job_analysis_accuracy(
-    payload: AgentAnalyzeRequest,
-    job: dict,
-    analysis: dict,
-    fallback_analysis: dict,
-) -> dict:
-    result = dict(analysis)
-    profile_missing = any(
-        str(value or "").strip() in {"", "不限", "未设置", "未填写", "请选择"}
-        for value in [payload.education, payload.major, payload.identity]
-    )
-    forbidden_profile_claims = [
-        "专业条件可以满足",
-        "你的专业符合",
-        "学历专业身份都满足",
-        "整体完全符合",
-    ]
-    for field in ["qualification_match", "major_match", "why_recommended"]:
-        text = str(result.get(field) or "")
-        if profile_missing and any(claim in text for claim in forbidden_profile_claims):
-            result[field] = fallback_analysis[field]
-
-    recruit_count = _safe_int(job.get("recruit_count") or job.get("headcount"))
-    recruit_risk = str(result.get("recruit_risk") or "")
-    if recruit_count != 1 and re.search(
-        r"只招\s*1\s*人|招录人数为\s*1\s*人|1\s*人岗|一人岗",
-        recruit_risk,
-    ):
-        result["recruit_risk"] = fallback_analysis["recruit_risk"]
-    return result
-
+def _enforce_job_analysis_accuracy(payload, job, analysis, fallback_analysis):
+    return ground_card(payload,job,analysis,fallback_analysis)[0]
 
 def _summarize_long_field(value: Any, max_length: int = 140) -> str:
     text = " ".join(str(value or "").split())
@@ -3702,6 +3684,7 @@ def build_quick_conclusion(
             question=payload.question,
             city=payload.city,
             region=payload.region,
+            scope_resolved=True,
         )
         if preference.get("city") and preference.get("explicit_nearby_requested"):
             return (
@@ -3719,6 +3702,7 @@ def build_quick_conclusion(
         question=payload.question,
         city=payload.city,
         region=payload.region,
+        scope_resolved=True,
     )
     location_text = _build_location_conclusion(preference, matched_jobs)
 
@@ -4614,262 +4598,8 @@ def _apply_report_data_semantics(
     return result
 
 
-def _enforce_recommendation_report_accuracy(
-    report: str,
-    payload: AgentAnalyzeRequest,
-    matched_jobs: list[dict],
-    recommendation_count: int,
-    fallback_report: str,
-) -> str:
-    """Fall back to deterministic copy when the LLM contradicts structured facts."""
-    result = str(report or "").strip()
-    if not result:
+def _enforce_recommendation_report_accuracy(report, payload, matched_jobs, recommendation_count, fallback_report):
+    """Compatibility boundary: fact grounding, without rigid paragraph or length gates."""
+    if recommendation_count != len([job for job in matched_jobs if not job.get("data_error")]):
         return fallback_report
-
-    required_sections = [
-        "直接结论",
-        "一、先看能不能报",
-        "二、限制条件怎么看",
-        "三、招录人数怎么看",
-        "四、历史分数怎么看",
-        "五、报名人数和竞争比怎么看",
-        "六、单位性质、薪资稳定性和成长价值",
-        "七、适合什么人 / 不适合什么人",
-        "八、我的建议",
-    ]
-    if any(section not in result for section in required_sections):
-        return fallback_report
-    if len(result) < 800 or len(result) > 1700:
-        return fallback_report
-    if any(
-        old_section in result
-        for old_section in ["为什么值得看：", "最大风险：", "数据缺口：", "下一步："]
-    ):
-        return fallback_report
-
-    forbidden_claims = [
-        "稳上",
-        "保过",
-        "必进面",
-        "一定适合",
-        "高度稳妥",
-        "录取概率高",
-        "专业条件可以满足",
-        "你的专业符合",
-        "学历专业身份都满足",
-        "筛掉绝大多数人",
-        "竞争一定小",
-        "分数很低",
-        "分数很高",
-        "一定轻松",
-        "一定很累",
-        "工资高",
-        "待遇好",
-        "待遇低",
-        "晋升快",
-        "前途好",
-        "神仙单位",
-        "劝退级",
-        "稳定舒服",
-        "一定能调动",
-        "一定能遴选",
-        "一定好",
-        "一定差",
-    ]
-    if any(claim in result for claim in forbidden_claims):
-        return fallback_report
-
-    system_flavor_phrases = [
-        "本次推荐",
-        "排序第一",
-        "宽口径初筛",
-        "卡片说明",
-        "本轮",
-        "当前画像仍有缺项",
-        "过滤后的结构化事实",
-        "结构化样本",
-        "兜底报告",
-        "校验链路",
-        "Prompt",
-        "Skill",
-        "runtime",
-        "内部规则",
-    ]
-    if any(phrase in result for phrase in system_flavor_phrases):
-        return fallback_report
-
-    if re.search(r"(?m)^\s*\|.*\|\s*$", result) or re.search(
-        r"(?m)^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$",
-        result,
-    ):
-        return fallback_report
-
-    mentioned_codes = set(re.findall(r"(?<!\d)(\d{6,20})(?!\d)", result))
-    if mentioned_codes:
-        return fallback_report
-
-    real_jobs = [job for job in matched_jobs if not job.get("data_error")]
-    if recommendation_count != len(real_jobs):
-        return fallback_report
-
-    first_paragraph = result.split("一、先看能不能报", maxsplit=1)[0]
-    job_identifiers = {
-        str(value).strip()
-        for job in real_jobs[:1]
-        for value in [
-            job.get("position_name"),
-            job.get("position"),
-            job.get("department"),
-            job.get("unit"),
-        ]
-        if str(value or "").strip()
-    }
-    if job_identifiers and not any(value in first_paragraph for value in job_identifiers):
-        return fallback_report
-    if re.search(
-        r"一、先看能不能报：?资格关\s*(?:\r?\n|\s)*(?:该岗位|岗位)?学历要求(?:是|为)",
-        result,
-    ):
-        return fallback_report
-    if re.search(
-        r"三、招录人数怎么看\s*(?:\r?\n|\s)*该岗位招",
-        result,
-    ):
-        return fallback_report
-    if re.search(
-        r"四、历史分数怎么看\s*(?:\r?\n|\s)*(?:\d{4}\s*年|历史)(?:最低)?进面分",
-        result,
-    ):
-        return fallback_report
-    if not re.search(r"(?:3\s*[-—至到]\s*5|三到五|三至五)\s*年", result):
-        return fallback_report
-    if "晋升" not in result:
-        return fallback_report
-    if not any(phrase in result for phrase in ["只为上岸", "只是为了上岸", "只为了上岸"]):
-        return fallback_report
-
-    visible_regions = {
-        str(value).strip()
-        for job in real_jobs
-        for value in [
-            job.get("city"),
-            job.get("district"),
-            job.get("province"),
-            job.get("region"),
-        ]
-        if str(value or "").strip()
-    }
-    if visible_regions and not any(value in result for value in visible_regions):
-        return fallback_report
-
-    if len(real_jobs) == 1:
-        identity_requirement = str(
-            real_jobs[0].get("identity_requirement")
-            or real_jobs[0].get("identity_required")
-            or ""
-        ).strip()
-        if identity_requirement and identity_requirement not in result:
-            return fallback_report
-
-    exact_jobs = [
-        job
-        for job in real_jobs
-        if job.get("score_match_type") == "exact_position_code"
-        and job.get("min_score") is not None
-    ]
-    reference_jobs = [
-        job
-        for job in real_jobs
-        if job.get("score_match_type") in {
-            "similar_reference",
-            "partial_position_code",
-            "fuzzy_high_confidence",
-        }
-    ]
-    if exact_jobs and not reference_jobs and re.search(r"同类岗位(?:分数)?参考|同类参考", result):
-        return fallback_report
-    if reference_jobs and not exact_jobs and re.search(
-        r"该岗位.*精确匹配.*历史.*分|该岗位历史精确匹配",
-        result,
-    ):
-        return fallback_report
-
-    if real_jobs and all(
-        _safe_int(job.get("recruit_count") or job.get("headcount")) != 1
-        for job in real_jobs
-    ):
-        if re.search(
-            r"(?:该岗位|这个岗|此岗位|当前岗位).{0,8}"
-            r"(?:只招\s*1\s*人|是\s*1\s*人岗|属于\s*1\s*人岗|是一人岗|属于一人岗)",
-            result,
-        ):
-            return fallback_report
-
-    count_words = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5}
-    reported_counts = [
-        int(value) if value.isdigit() else count_words.get(value, 0)
-        for value in re.findall(
-            r"(?:本次|此次|这次|筛选出|推荐|返回|共)[^。\n]{0,12}?([1-5一二两三四五])\s*个(?:岗位|职位)",
-            result,
-        )
-    ]
-    if any(value != recommendation_count for value in reported_counts):
-        return fallback_report
-
-    known_recruit_counts = {
-        _safe_int(job.get("recruit_count") or job.get("headcount"))
-        for job in real_jobs
-    }
-    stated_recruit_counts = [
-        int(value)
-        for value in re.findall(r"招录(?:人数)?\D{0,4}(\d+)\s*人", result)
-    ]
-    if any(value not in known_recruit_counts for value in stated_recruit_counts):
-        return fallback_report
-    if len(real_jobs) == 1:
-        expected_count = _safe_int(
-            real_jobs[0].get("recruit_count") or real_jobs[0].get("headcount")
-        )
-        if expected_count and not re.search(
-            rf"(?:招录?|招考)(?:人数)?\D{{0,4}}{expected_count}\s*人",
-            result,
-        ):
-            return fallback_report
-
-    if real_jobs and all(
-        job.get("applicant_count") is None and job.get("applicants_count") is None
-        for job in real_jobs
-    ):
-        if re.search(r"报名人数\s*(?:为|约|达到|只有)?\s*\d", result):
-            return fallback_report
-
-    if real_jobs and all(not job.get("competition_ratio") for job in real_jobs):
-        if re.search(r"(竞争较小|竞争较大|竞争激烈|竞争不激烈|竞争压力(?:小|大|低|高))", result):
-            return fallback_report
-
-    if real_jobs and not any(
-        job.get("score_match_type") == "exact_position_code"
-        and job.get("min_score") is not None
-        for job in real_jobs
-    ):
-        if re.search(r"(?:该岗位|岗位的)?(?:最低)?进面分\s*(?:为|是|约)?\s*\d", result):
-            return fallback_report
-    if len(real_jobs) == 1:
-        min_score = real_jobs[0].get("min_score")
-        score_match_type = str(real_jobs[0].get("score_match_type") or "no_match")
-        if (
-            min_score is not None
-            and score_match_type == "exact_position_code"
-            and str(min_score) not in result
-        ):
-            return fallback_report
-        if (min_score is None or score_match_type == "no_match") and "暂无" not in result:
-            return fallback_report
-
-    profile_missing = any(
-        str(value or "").strip() in {"", "不限", "未设置", "未填写", "请选择"}
-        for value in [payload.education, payload.major, payload.identity]
-    )
-    if profile_missing and "补充" not in result and "排除" not in result:
-        return fallback_report
-    return result
+    return ground_report(payload,matched_jobs,report,fallback_report)[0]

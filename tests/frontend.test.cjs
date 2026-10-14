@@ -162,7 +162,7 @@ test('current city wins over saved profile even when asking by profile', () => {
         inferAnalysisContextPreference:()=> 'profile', inferQuestionLocationPreference:()=>({}),
         isPolicyQuestion:()=>false,isJobRecommendationQuestion:()=>true,getValue:()=>'',
         inferResultLimit:()=>1,activeSessionId:null,currentUser:null,authToken:'',
-        currentJobContext:null,lastRecommendationJobs:[],buildCurrentJobPayload:v=>v,
+        currentJobContext:null,lastRecommendationJobs:[],currentAnalystSelectionPlan:{},buildCurrentJobPayload:v=>v,
     });
     assert.equal(c.buildAnalystPayload('按我的画像推荐一个岗位').city,'汕头');
     c.userProfile={...profile,city:'汕头'};
@@ -244,4 +244,49 @@ test('category existence questions submit as job recommendations',()=>{
     const c=load(['isJobRecommendationQuestion'],{});
     for(const question of ['有没有揭阳公安岗的','有无揭阳税务岗位','是否有海关岗位'])
         assert.equal(c.isJobRecommendationQuestion(question),true,question);
+});
+
+
+test('analysis provenance distinguishes discarded text from accepted model output',()=>{
+    const c=load(['analysisProvenanceText'],{});
+    const text=c.analysisProvenanceText({analysis_metadata:{output_source:'rules',
+        report:{call_succeeded:true,accepted:false,reasons:['unverified_numeric_claim']},
+        selection:{total_qualified_candidates:12,compared_count:0,model_used:false},skill:{applied:false}}});
+    assert.match(text,/规则/);assert.doesNotMatch(text,/模型分析已采纳/);
+    const used=c.analysisProvenanceText({analysis_metadata:{output_source:'model',report:{accepted:true},
+        selection:{model_used:true,compared_count:8,total_qualified_candidates:20},skill:{applied_to_selection:true}}});
+    assert.match(used,/公开方法/);assert.match(used,/20/);assert.match(used,/8/);
+});
+
+test('effective server conditions update untouched controls but not newer edits',()=>{
+    const state={exam_type:'国考',province:'广东',city:'揭阳',education:'本科',major:'软件工程',identity:'应届生'};
+    const calls=[];
+    const c=load(['applyEffectiveAnalysisConditions'],{getCurrentAnalysisFilters:()=>state,
+        setValue:(id,value)=>calls.push([id,value]),populateSelect:(id,values,value)=>calls.push([id,value]),
+        document:{getElementById:()=>({tagName:'INPUT'})},renderAnalysisConditionSurfaces(){}});
+    const payload={current_filters:{...state}};
+    c.applyEffectiveAnalysisConditions({analysis_metadata:{effective_conditions:{...state,city:'深圳'}}},payload);
+    assert.ok(calls.some(([id,value])=>id==='analystCity'&&value==='深圳'));
+    calls.length=0;state.city='汕头';
+    c.applyEffectiveAnalysisConditions({analysis_metadata:{effective_conditions:{...state,city:'深圳'}}},payload);
+    assert.equal(calls.length,0);
+});
+
+
+test('current job payload preserves public extra qualifications through normalization', () => {
+    const c = load(['normalizeJob', 'buildCurrentJobPayload'], {
+        getDisplayPositionCode: job => job.position_code || '',
+        firstPresent: (...values) => values.find(value => value !== undefined && value !== null),
+        optionalNumber: value => value == null ? null : Number(value),
+        sanitizeUserFacingText: value => String(value || ''),
+        normalizePositionCode: value => String(value || ''),
+        getJobDisplayTitle: job => job.position_name || '测试岗位',
+        formatPublicJobFlag: value => String(value || ''),
+        normalizeArray: value => Array.isArray(value) ? value : [],
+        normalizeJobRiskFlags: () => [], normalizeRiskLevel: () => '',
+    });
+    const normalized = c.normalizeJob({position_code:'333333', province:'广东', year:2027,
+        exam_type:'国考', eligibility_extra_requirements:'性别：女性；年龄要求：30周岁以下'});
+    const context = c.buildCurrentJobPayload(normalized);
+    assert.equal(context.eligibility_extra_requirements, '性别：女性；年龄要求：30周岁以下');
 });

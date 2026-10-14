@@ -133,15 +133,19 @@ def search_jobs(
     limit: int | None = None,
     year: int | None = None,
     profile: dict | None = None,
+    selection_constraints: dict | None = None,
+    candidate_pool_limit: int | None = None,
+    scope_resolved: bool = False,
 ) -> list[dict]:
     """先执行硬性条件过滤，再为候选岗位评分并返回 Top N 推荐。"""
     recommendations: list[dict] = []
-    category_preference = extract_job_category_preference(question)
+    category_preference = (selection_constraints or {}).get("category_preference") or extract_job_category_preference(question)
     eligibility_profile = current_qualification_profile(profile or {}, education, major, identity)
     categories_by_scope: dict[tuple, list[str]] = {}
-    requested_province = resolve_requested_province(region=region, question=question)
+    scope_question = "" if scope_resolved else question
+    requested_province = resolve_requested_province(region=region, question=scope_question)
     effective_region = requested_province.get("province") or region
-    source_jobs = _read_jobs(region=region, question=question, year=year)
+    source_jobs = _read_jobs(region=region, question=scope_question, year=year)
     if not source_jobs:
         return [
             _missing_jobs_result(
@@ -155,6 +159,7 @@ def search_jobs(
         question=question,
         city=city,
         region=effective_region,
+        scope_resolved=scope_resolved,
     )
 
     if year is None:
@@ -164,6 +169,8 @@ def search_jobs(
             latest[scope] = max(latest.get(scope, 0), int(row.get("year") or 0))
         source_jobs = [row for row in source_jobs if int(row.get("year") or 0) == latest[(row.get("region"), row.get("exam_type"))]]
     for source_job in source_jobs:
+        if not _matches_selection_constraints(source_job, selection_constraints or {}):
+            continue
         if not matches_job_category(source_job, category_preference):
             continue
         if not _match_target(target, source_job.get("target", "")):
@@ -317,11 +324,31 @@ def search_jobs(
         reverse=True,
     )
     result_limit = _coerce_result_limit(limit if limit is not None else top_n)
+    if candidate_pool_limit is not None:
+        result_limit = min(200, max(1, int(candidate_pool_limit)))
     results = recommendations[:result_limit]
+    if results and candidate_pool_limit is not None:
+        results[0]["_eligible_candidate_count"] = len(recommendations)
     for job in results:
         job.pop("_ranking_score", None)
         job.pop("_location_preference_reason", None)
     return results
+
+
+def _matches_selection_constraints(job: dict, constraints: dict) -> bool:
+    required = str(job.get("major_required") or job.get("major_requirement") or "")
+    if constraints.get("major_unrestricted") and not re.search(
+            r"不限专业|专业不限|不限制专业|专业不限制|^\s*不限\s*$", required):
+        return False
+    if any(str(term) in required for term in constraints.get("excluded_majors", []) if term):
+        return False
+    education = str(job.get("education_required") or "")
+    maximum = constraints.get("education_max")
+    if maximum and _education_level(education) > _education_level(maximum):
+        return False
+    if any(str(term) in education for term in constraints.get("education_exclusions", []) if term):
+        return False
+    return True
 
 
 def _evaluate_recommendation_eligibility(job: dict, profile: dict) -> dict:
@@ -335,6 +362,35 @@ def _evaluate_recommendation_eligibility(job: dict, profile: dict) -> dict:
     return evaluate_job(facts, profile, check_remarks=True)
 
 
+def find_job_by_identity(context: dict) -> dict:
+    """Restore a current card's full server evidence without applying new city filters.
+
+    Only an unambiguous record in the card's province, year, exam and department
+    scope is accepted. Client qualification text is never merged into the result.
+    """
+    context = context if isinstance(context, dict) else {}
+    position_code = _normalize_position_code(context.get("position_code"))
+    province = _normalize_region(context.get("province") or context.get("region") or "")
+    year = _optional_int(context.get("year"))
+    exam_type = str(context.get("exam_type") or "").strip()
+    department_code = str(context.get("department_code") or "").strip()
+    if not position_code or not province or _is_unlimited_filter(province) or not year:
+        return {"status":"not_found", "job":None, "match_type":"", "message":"",
+                "reason":"incomplete_identity"}
+    matches = [job for job in _read_jobs(region=province, question="", year=year)
+        if _select_position_code(job.get("position_code"), job.get("职位代码"),
+                                 job.get("岗位代码"), job.get("job_id")) == position_code
+        and _optional_int(job.get("year")) == year
+        and _normalize_region(job.get("province") or job.get("region") or "") == province
+        and (not exam_type or _match_exam_type(exam_type, job.get("exam_type") or ""))
+        and (not department_code or str(job.get("department_code") or "").strip() == department_code)]
+    if len(matches) == 1:
+        return _single_job_found(matches[0], "context_identity_exact")
+    if len(matches) > 1:
+        return _single_job_ambiguous()
+    return {"status":"not_found", "job":None, "match_type":"", "message":""}
+
+
 def find_single_job(
     target: str,
     exam_type: str,
@@ -342,11 +398,13 @@ def find_single_job(
     query: str,
     city: str = "",
     year: int | None = None,
+    scope_resolved: bool = False,
 ) -> dict:
     """按用户输入定位单个已知岗位，不做学历、专业、身份过滤。"""
-    requested_province = resolve_requested_province(region=region, question=query)
+    scope_question = "" if scope_resolved else query
+    requested_province = resolve_requested_province(region=region, question=scope_question)
     effective_region = requested_province.get("province") or region
-    source_jobs = _read_jobs(region=region, question=query, year=year)
+    source_jobs = _read_jobs(region=region, question=scope_question, year=year)
     if not source_jobs:
         return {
             "status": "error",
@@ -355,6 +413,7 @@ def find_single_job(
             "message": missing_jobs_message(requested_province.get("province", "")),
         }
 
+    requested_code = _extract_position_code(query)
     scoped_jobs = [
         job
         for job in source_jobs
@@ -363,7 +422,7 @@ def find_single_job(
             target=target,
             exam_type=exam_type,
             region=effective_region,
-            city=city,
+            city="" if requested_code else city,
         )
     ]
     normalized_query = _normalize_lookup_text(query)
@@ -431,10 +490,11 @@ def extract_location_preference(
     question: str,
     city: str = "",
     region: str = "",
+    scope_resolved: bool = False,
 ) -> dict:
     """从可选城市和用户问题中提取轻量地域偏好。"""
     question_text = _normalize_text(question)
-    question_location = resolve_region(question_text)
+    question_location = {} if scope_resolved else resolve_region(question_text)
     filter_city = _normalize_city(city)
     normalized_region = _normalize_region(region)
     question_city = _normalize_city(question_location.get("city", ""))
@@ -532,20 +592,9 @@ def _match_single_query_scope(
     if region and _score_region(region, job.get("region", "")) == 0:
         return False
 
-    normalized_city = _normalize_city(city)
-    if normalized_city and normalized_city != _normalize_city(job.get("city", "")):
-        search_text = _normalize_lookup_text(
-            " ".join(
-                [
-                    job.get("city", ""),
-                    job.get("work_location", ""),
-                    job.get("department", ""),
-                    job.get("notes", ""),
-                ]
-            )
-        )
-        if _normalize_lookup_text(normalized_city) not in search_text:
-            return False
+    preference = extract_location_preference("", city=city, region=region)
+    if not _matches_recommendation_city(job, preference):
+        return False
 
     return True
 

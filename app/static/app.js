@@ -277,6 +277,7 @@ let currentRequestId = 0;
 let currentPendingMessage = null;
 let currentJobContext = null;
 let lastRecommendationJobs = [];
+let currentAnalystSelectionPlan = {};
 let currentImportPreview = null;
 let datasetRowsState = createDatasetRowsState();
 let datasetRowsRequestCounter = 0;
@@ -1378,6 +1379,7 @@ async function loadSavedSession(sessionId, options = {}) {
         chatHistory = [];
         currentJobContext = null;
         lastRecommendationJobs = [];
+    currentAnalystSelectionPlan = {};
         setActiveSession(sessionId);
         const list = document.getElementById("chatMessages");
         if (list) {
@@ -2580,6 +2582,7 @@ function buildAnalystPayload(question) {
         session_id: activeSessionId,
         save_history: Boolean(currentUser && authToken),
         profile: { ...userProfile },
+        selection_plan: { ...currentAnalystSelectionPlan },
         current_filters: currentFilters,
         context_preference: contextPreference,
         location_preference: questionLocation,
@@ -2611,6 +2614,7 @@ function buildCurrentJobPayload(rawJob) {
         political_requirement: job.political_requirement,
         grassroots_requirement: job.grassroots_requirement,
         qualification_requirement: job.qualification_requirement,
+        eligibility_extra_requirements: job.eligibility_extra_requirements,
         agency_level: job.agency_level,
         is_public_service: job.is_public_service,
         is_law_enforcement: job.is_law_enforcement,
@@ -2717,6 +2721,14 @@ async function postAnalyze(payload, options = {}) {
 }
 
 function renderAnalystResponse(messageNode, data, payload) {
+    applyEffectiveAnalysisConditions(data,payload);
+    currentAnalystSelectionPlan = data?.analysis_metadata?.selection_plan || {};
+    const effective = data?.analysis_metadata?.effective_conditions;
+    if (effective) {
+        payload = { ...payload, city:effective.city, region:effective.province,
+            exam_type:effective.exam_type, major:effective.major, education:effective.education, identity:effective.identity };
+        renderRecognizedConditions(payload);
+    }
     const answer = sanitizeUserFacingText(data?.analysis_report || data?.summary)
         || "当前没有生成有效回答，请换一种说法再试。";
     const resultLimit = Math.max(1, Math.min(Number(payload?.result_limit) || 5, 5));
@@ -2735,7 +2747,7 @@ function renderAnalystResponse(messageNode, data, payload) {
     if (jobs.length > 0 && !isContextFollowup) {
         replaceChatMessage(messageNode, createRecommendationResponse(jobs, answer, data, payload));
     } else {
-        replaceChatMessage(messageNode, renderMarkdown(answer));
+        replaceChatMessage(messageNode, createAnalysisProvenanceMarkup(data)+renderMarkdown(answer));
     }
     rememberChatMessage("assistant", answer);
     if (jobs.length > 0 && data?.intent === "job_recommendation") {
@@ -2917,6 +2929,42 @@ function isStructuredJob(value) {
     );
 }
 
+function analysisProvenanceText(data) {
+    const meta = data?.analysis_metadata;
+    if (!meta) return "";
+    const labels = {model:"模型分析已采纳并校验",mixed:"模型与规则共同分析",rules:"规则分析结果"};
+    const parts = [labels[meta.output_source] || "规则分析结果"];
+    if (meta.skill?.applied_to_selection) parts.push("已按公开方法比较候选");
+    const selection = meta.selection || {};
+    if (selection.total_qualified_candidates !== undefined) {
+        parts.push(`筛选候选 ${selection.total_qualified_candidates} 个；模型比较 ${selection.compared_count || 0} 个`);
+    }
+    if (meta.report?.call_succeeded && !meta.report?.accepted) parts.push("模型正文未采纳，当前展示规则说明");
+    if (!selection.model_used && selection.fallback_reason) parts.push("岗位比较使用规则顺序");
+    return parts.join(" · ");
+}
+
+function createAnalysisProvenanceMarkup(data) {
+    const text = analysisProvenanceText(data);
+    return text ? `<p class="recognized-conditions" role="status">${escapeHtml(text)}</p>` : "";
+}
+
+function applyEffectiveAnalysisConditions(data, payload) {
+    const effective = data?.analysis_metadata?.effective_conditions;
+    if (!effective || !payload?.current_filters) return;
+    const current = getCurrentAnalysisFilters();
+    if (Object.entries(payload.current_filters).some(([key,value])=>String(current[key] || "")!==String(value || ""))) return;
+    const ids = {province:"analystRegion",city:"analystCity",exam_type:"analystExamType",education:"analystEducation",major:"analystMajor",identity:"analystIdentity"};
+    for (const [key,id] of Object.entries(ids)) {
+        const value = effective[key];
+        if (value === undefined || value === null) continue;
+        const element = document.getElementById(id);
+        if (element?.tagName === "SELECT") populateSelect(id,[...element.options].map(option=>option.value),value);
+        else setValue(id,value);
+    }
+    renderAnalysisConditionSurfaces();
+}
+
 function createRecommendationResponse(jobs, answer, data, payload) {
     const cards = jobs
         .map((job) => createJobCard(job, {
@@ -2936,6 +2984,7 @@ function createRecommendationResponse(jobs, answer, data, payload) {
         : "";
     const actions = jobs.map(createRecommendationActionGroup).join("");
     return `
+        ${createAnalysisProvenanceMarkup(data)}
         <section class="chat-response-section" aria-label="岗位推荐卡片">
             <div class="chat-job-list">${cards}</div>
         </section>
@@ -3145,6 +3194,7 @@ function clearChat() {
     setActiveSession(null);
     currentJobContext = null;
     lastRecommendationJobs = [];
+    currentAnalystSelectionPlan = {};
     const messages = document.getElementById("chatMessages");
     if (messages) {
         messages.innerHTML = createChatEmptyState();
@@ -3360,6 +3410,7 @@ function createJobCard(job, options = {}) {
 
     return `
         <article class="job-card">
+            ${normalized.query_scope_warning ? `<p class="run-warning">${escapeHtml(normalized.query_scope_warning)}</p>` : ""}
             <div class="job-card-head">
                 <div>
                     <h3>${escapeHtml(normalized.position_name || "未命名岗位")}</h3>
@@ -3368,6 +3419,8 @@ function createJobCard(job, options = {}) {
                 </div>
                 <div class="badge-row">
                     <span class="badge ${status.className}">${escapeHtml(status.label)}</span>
+                    <span class="badge">${escapeHtml({matched:"资格初步匹配",pending:"资格待核验",unmet:"明确不符合"}[normalized.eligibility_status] || "资格待核验")}</span>
+                    ${normalized.recommendation_grade ? `<span class="badge">${escapeHtml(normalized.recommendation_grade)}</span>` : ""}
                     <span class="badge ${getScoreMatchClass(normalized.score_match_type)}">${escapeHtml(scoreStatus)}</span>
                     <span class="badge ${riskClass}">${escapeHtml(normalized.risk_level)}</span>
                 </div>
@@ -3800,6 +3853,7 @@ function normalizeJob(job) {
         political_requirement: String(job?.political_requirement || "").trim(),
         grassroots_requirement: String(job?.grassroots_requirement || job?.grassroots_experience || "").trim(),
         qualification_requirement: String(job?.qualification_requirement || job?.qualification || "").trim(),
+        eligibility_extra_requirements: String(job?.eligibility_extra_requirements || "").trim(),
         agency_level: String(job?.agency_level || job?.institution_level || "").trim(),
         is_public_service: formatPublicJobFlag(job?.is_public_service),
         is_law_enforcement: formatPublicJobFlag(job?.is_law_enforcement),
@@ -3818,6 +3872,10 @@ function normalizeJob(job) {
         score_match_reason: scoreMatchReason,
         risk_flags: normalizeJobRiskFlags(job),
         risk_level: normalizeRiskLevel(job),
+        eligibility_status: String(job?.eligibility_status || "pending"),
+        qualification_summary: String(job?.ai_analysis?.qualification_match || ""),
+        query_scope_warning: String(job?.query_scope_warning || ""),
+        recommendation_grade: String(job?.selection_decision?.recommendation_grade || ""),
         recommend_level: String(job?.match_level || "").trim(),
         recommend_reason: sanitizeUserFacingText(
             job?.recommend_reason

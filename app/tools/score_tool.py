@@ -45,11 +45,13 @@ def search_scores(
     region: str,
     major: str,
     matched_jobs: list[dict] | None = None,
+    limit: int = 8,
 ) -> list[dict]:
     """从 CSV 中检索分数线参考。
 
     分数线必须先按 target、exam_type、region 隔离，再按职位代码或岗位类别匹配。
     """
+    limit = max(1, min(int(limit), 200))
     scores = _read_scores(region=region)
     matched_jobs = matched_jobs or []
     scoped_scores = [
@@ -93,7 +95,7 @@ def search_scores(
             ),
             reverse=True,
         )
-        return results[:8]
+        return results[:limit]
 
     position_keywords = _build_position_keywords(major, matched_jobs)
     position_codes = _build_position_codes(matched_jobs)
@@ -144,7 +146,23 @@ def search_scores(
         ),
         reverse=True,
     )
-    return results[:8]
+    return results[:limit]
+
+
+
+def select_score_references(matched_jobs: list[dict], score_references: list[dict]) -> list[dict]:
+    """Keep evidence for the selected jobs using the same scoped matching rules."""
+    selected, seen = [], set()
+    for job in matched_jobs:
+        score = _best_score_match_for_job(job, score_references)
+        if not score:
+            continue
+        key = tuple(str(score.get(field) or "") for field in (
+            "score_id", "department_code", "position_code", "year", "exam_type", "region"))
+        if key not in seen:
+            selected.append(score)
+            seen.add(key)
+    return selected
 
 
 def find_single_score_reference(
