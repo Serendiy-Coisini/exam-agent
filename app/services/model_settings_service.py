@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.config import settings
+from app.services.analysis_skill_service import get_analysis_skill_status
 from app.services.model_provider_options import model_request_options
 from app.schemas.model_settings_schema import ModelSettingsPayload
 
@@ -38,7 +39,8 @@ def get_model_status() -> dict:
     config = get_model_configuration()
     return {"base_url": config.base_url, "model_name": config.model_name,
             "api_key_set": bool(config.api_key),
-            "configured": bool(config.api_key and config.model_name)}
+            "configured": bool(config.api_key and config.model_name),
+            "analysis_skill": get_analysis_skill_status()}
 
 
 def _resolve(payload: ModelSettingsPayload) -> ModelConfiguration:

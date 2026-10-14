@@ -40,3 +40,7 @@
 这些快捷项采用已核对的官方接口示例，供快速开始使用，不代表自动检测模型权限或保证账户余额。可按服务商后台可用模型修改名称。连接测试对上述预填模型关闭思考，只验证简短文字响应，正式分析保留服务商默认思考行为；Kimi K2.6 请求不发送不支持的 temperature 参数。自定义地址不会套用官方地址的专用参数。
 
 官方参考：[DeepSeek](https://api-docs.deepseek.com/)、[通义千问](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions)、[智谱 GLM](https://docs.bigmodel.cn/cn/guide/models/text/glm-4.7)、[Kimi](https://platform.kimi.com/docs/guide/use-thinking-models)、[硅基流动](https://docs.siliconflow.cn/docs/usercases/use-siliconcloud-in-translate-js)。
+
+## 分析方法
+
+工作台已内置网友红领巾公开选岗方法。配置任一兼容模型后，岗位推荐、岗位卡片、选岗策略与公考复盘使用该框架；模型设置页显示实际加载状态。方法不会覆盖专业目录、资格核验或数据事实。详见 [接入范围、来源与维护说明](analysis-skill.md)。

@@ -7,7 +7,7 @@ function setup(apiFetch) {
     const path = 'app/static/model-settings.js';
     assert.ok(fs.existsSync(path), 'Model settings UI should exist');
     const ids = ['modelBaseUrl', 'modelName', 'modelApiKey', 'modelClearKey',
-        'modelSettingsStatus', 'modelSettingsResult', 'modelSettingsFields',
+        'modelSettingsStatus', 'modelSkillStatus', 'modelSettingsResult', 'modelSettingsFields',
         'modelSaveButton', 'modelTestButton', 'modelReloadButton', 'modelSettingsForm'];
     const elements = Object.fromEntries(ids.map(id => [id, { value: '', checked: false,
         disabled: false, hidden: false, textContent: '', placeholder: '', dataset: {},
@@ -120,4 +120,32 @@ test('same endpoint preset retains draft key and failed-load presets do nothing'
     await failed.c.loadModelSettings();
     failed.c.applyModelPreset('deepseek');
     assert.equal(failed.elements.modelBaseUrl.value,'');
+});
+
+
+test('skill status distinguishes loaded guidance from unconfigured or unavailable model', async () => {
+    const skill = {ready:true,label:'网友红领巾公开方法',revision:'9410041d593d291687861fbfd52257ae9914356e'};
+    const {c,elements:e} = setup(async () => ({configured:false,analysis_skill:skill}));
+    await c.loadModelSettings();
+    assert.match(e.modelSkillStatus.textContent, /网友红领巾/);
+    assert.match(e.modelSkillStatus.textContent, /规则分析/);
+    c.renderModelSettings({configured:true,model_name:'fiction',analysis_skill:skill});
+    assert.match(e.modelSkillStatus.textContent, /推荐|岗位分析/);
+    c.renderModelSettings({configured:true,analysis_skill:{ready:false}});
+    assert.match(e.modelSkillStatus.textContent, /未加载/);
+    assert.doesNotMatch(e.modelSkillStatus.textContent, /已接入/);
+    assert.match(fs.readFileSync('app/static/index.html','utf8'), /id="modelSkillStatus"/);
+});
+
+test('failed reload does not retain a stale skill-loaded claim', async () => {
+    let fail = false;
+    const {c,elements:e} = setup(async () => {
+        if (fail) throw new Error('offline');
+        return {configured:true,analysis_skill:{ready:true,label:'网友红领巾公开方法'}};
+    });
+    await c.loadModelSettings();
+    fail = true;
+    await c.loadModelSettings();
+    assert.match(e.modelSkillStatus.textContent, /无法确认/);
+    assert.doesNotMatch(e.modelSkillStatus.textContent, /已接入/);
 });

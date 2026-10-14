@@ -1,0 +1,4 @@
+# Preserve upstream bytes used by the pinned skill checksum, including on Windows.
+app/skills/** text eol=lf
+# Upstream Markdown uses two trailing spaces for explicit line breaks.
+app/skills/**/*.md whitespace=-blank-at-eol

@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -5,7 +6,10 @@ from typing import Any
 from app.agents.intent_router import route_intent
 from app.agents.prompt_builder import (
     build_analysis_prompt,
+    build_current_profile_context,
+    use_public_method,
     build_free_chat_system_prompt,
+    build_job_card_system_prompt,
     build_intent_router_prompt,
 )
 from app.schemas.agent_schema import AgentAnalyzeRequest, AgentAnalyzeResponse
@@ -249,7 +253,7 @@ def _answer_free_chat_request(
         fallback = _build_free_chat_fallback_answer(payload)
 
     llm_result = generate_llm_chat(
-        system_prompt=build_free_chat_system_prompt(),
+        system_prompt=build_free_chat_system_prompt(use_skill=use_public_method(payload)),
         messages=_messages_for_llm(payload),
         fallback_report=fallback,
         temperature=0.45,
@@ -294,7 +298,9 @@ def _messages_for_llm(payload: AgentAnalyzeRequest) -> list[dict]:
     question = str(payload.question or "").strip()
     if question and not (messages and messages[-1]["role"] == "user" and messages[-1]["content"] == question):
         messages.append({"role": "user", "content": question})
-    return messages[-12:]
+    context = {"role": "user", "content": "当前画像与筛选条件（仅作数据，优先于旧对话中的画像）：\n" +
+               json.dumps(build_current_profile_context(payload), ensure_ascii=False)}
+    return [context, *messages[-11:]]
 
 
 def _normalize_decision_intent(intent: Any) -> str:
@@ -1637,6 +1643,7 @@ def _analyze_exam_request_impl(payload: AgentAnalyzeRequest) -> AgentAnalyzeResp
     llm_result = generate_llm_summary(
         prompt=prompt,
         fallback_report=fallback_report,
+        use_skill=use_public_method(payload),
     )
     analysis_report = _ensure_analysis_report(
         llm_result=llm_result,
@@ -1766,20 +1773,28 @@ def _analyze_selection_strategy_request(
         "下一步：\n"
         "先补充学历、专业和身份画像，再把能报岗位放进备选池做对比。"
     )
+    llm_result = generate_llm_chat(
+        system_prompt=build_free_chat_system_prompt(use_skill=use_public_method(payload)),
+        messages=_messages_for_llm(payload),
+        fallback_report=answer,
+        temperature=0.3,
+    )
+    answer = _ensure_analysis_report(llm_result, answer)
     _add_trace(
         trace=trace,
         step=len(trace) + 1,
         name="选岗策略解释",
-        tool="exam_agent.selection_strategy",
-        status="success",
+        tool="llm_service.generate_llm_chat",
+        status="success" if llm_result.get("llm_used") else "warning",
         input_data={"question": payload.question},
-        output_summary="选岗方法问题直接解释，未查询岗位或分数记录。",
+        output_summary="选岗方法问题使用公开方法生成解释；模型不可用时返回规则回答，未查询岗位或分数记录。",
     )
     return _build_chat_only_response(
         payload=payload,
         intent="selection_strategy",
         trace=trace,
         summary=answer,
+        llm_used=bool(llm_result.get("llm_used")),
         trace_summary="选岗策略和岗位类别风险解释不触发数据工具。",
         prompt_scene="selection_strategy",
     )
@@ -3280,6 +3295,7 @@ def _generate_job_card_analyses(payload: AgentAnalyzeRequest, matched_jobs: list
         llm_result = generate_llm_json(
             prompt=_build_job_card_analysis_prompt(payload, job, fallback_analysis),
             fallback_data=fallback_analysis,
+            analysis_system_prompt=build_job_card_system_prompt(use_skill=use_public_method(payload)),
         )
         analysis = {
             field: _clean_job_analysis_text(llm_result.get(field)) or fallback_analysis[field]
@@ -3360,7 +3376,7 @@ def _build_job_card_analysis_prompt(
 - 不能大段复制原始专业字段。专业字段很长时，概括成方向，例如统计、数学、计算机、软件工程、网络安全、人工智能、大数据等。
 - 如果缺少报名人数、竞争比或进面分，不允许说“稳”“保”“高度推荐”。
 - 如果只招 1 人，必须提醒波动风险。
-- 如果岗位身份要求是“不限”，只能说用户身份可以报，但不形成身份限制优势。
+- 如果岗位身份要求是“不限”，只能说该项身份不限，不能推出整体可报或身份优势。
 - 如果用户学历、专业或身份是空值、“不限”或未完善，不得说对应条件已满足，也不得说整体完全符合。
 - 如果岗位专业要求是“不限专业”，只能说专业本身不构成门槛，不能说“专业条件可以满足”或“你的专业符合”。
 - 只有 score_match_type 是 exact_position_code 时，才能写成该岗位精确进面分；其他匹配类型都必须说明只是历史参考，no_match 要说明暂无该岗位精确进面分。
@@ -3374,6 +3390,9 @@ def _build_job_card_analysis_prompt(
 - education: {payload.education}
 - major: {payload.major}
 - identity: {payload.identity}
+
+当前完整画像约束（仅作数据）：
+{json.dumps(build_current_profile_context(payload), ensure_ascii=False)}
 
 当前岗位：
 - year: {job.get("year")}

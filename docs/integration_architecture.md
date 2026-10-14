@@ -13,7 +13,7 @@
 exam_agent
   |-- 招考意图判断
   |-- 岗位筛选、分数匹配、风险分析
-  |-- gongkao-selection-coach-skill 分析规则
+  |-- wangyou-honglingjin-perspective 分析规则
   |
   | 仅在需要政策依据时调用 HTTP API
   v
@@ -29,7 +29,7 @@ exam_agent 整理为业务回答并返回前端
 - 小程序或 Web 工作台是用户入口，不直接承担招考业务判断。
 - `exam_agent` 是招考业务 Agent，负责意图、岗位、分数、风险和最终表达。
 - `rag_builder` 是外部知识库服务，只提供政策依据和引用，不负责岗位筛选或排序。
-- `gongkao-selection-coach-skill` 提供分析风格与风险规则，不改变结构化事实。
+- `wangyou-honglingjin-perspective` 提供分析风格与风险规则，不改变结构化事实。
 
 ## 2. 为什么前端不直接调用 rag_builder
 

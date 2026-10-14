@@ -71,6 +71,12 @@ function renderModelSettings(data) {
     document.getElementById("modelSettingsStatus").textContent = data.configured
         ? `已配置模型：${data.model_name}。可点击测试连接确认是否可用。`
         : "尚未完整配置模型，分析师当前使用规则分析。";
+    const skill = data.analysis_skill;
+    document.getElementById("modelSkillStatus").textContent = skill?.ready
+        ? `已接入：${skill.label}（版本 ${(skill.revision || "").slice(0, 7)}）。${data.configured
+            ? "模型推荐报告、岗位卡片、选岗策略与复盘咨询默认使用此方法；接口不可用时回退规则分析。"
+            : "模型未配置，当前仍为规则分析；配置模型后使用此方法。"}`
+        : "公开选岗方法未加载，当前使用通用分析规则。请检查项目中的 skill 文件后重新读取。";
 }
 
 async function loadModelSettings() {
@@ -86,6 +92,7 @@ async function loadModelSettings() {
         showModelSettingsResult("");
     } catch (error) {
         document.getElementById("modelSettingsStatus").textContent = "暂时无法读取配置。";
+        document.getElementById("modelSkillStatus").textContent = "暂时无法确认分析方法状态，请重新读取。";
         showModelSettingsResult(`读取失败：${getErrorText(error)}。处理后点击重新读取。`, "error");
     } finally {
         setModelSettingsBusy(false);

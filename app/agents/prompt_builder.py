@@ -1,78 +1,10 @@
 import json
-import logging
-import os
-from functools import lru_cache
-from pathlib import Path
+import re
 from typing import Any
 
 from app.schemas.agent_schema import AgentAnalyzeRequest
-
-
-logger = logging.getLogger(__name__)
-
-SKILL_DIR_ENV = "GONGKAO_SELECTION_SKILL_DIR"
-DEFAULT_SKILL_DIR = Path(r"D:\PycharmProjects\gongkao-selection-coach-skill")
-SKILL_CORE_FILES = (
-    Path("SKILL.md"),
-    Path("references/identity_card.md"),
-    Path("references/mental_models.md"),
-    Path("references/distilled_style.md"),
-    Path("references/unit_type_models.md"),
-    Path("references/risk_rules.md"),
-    Path("references/anti_patterns.md"),
-    Path("references/fallback_tree.md"),
-)
-SKILL_EXCLUDED_REFERENCES = (
-    "raw_samples.md",
-    "web_research_notes.md",
-    "README.md",
-    "auto_research_protocol.md",
-)
-MINIMAL_SKILL_CORE_PROMPT = """
-你是务实型公考选岗教练。回答必须先判断资格，再看限制条件、招录人数、历史分数、
-报名人数、竞争比、单位性质、适合人群和下一步。不能编造数据，不能说稳上，
-不能用表格复刻岗位卡片。历史分数只作参考，缺少报名人数或竞争比时不能判断竞争强弱，
-具体工作内容、待遇、晋升和工作强度没有事实就不能补写。
-""".strip()
-
-
-@lru_cache(maxsize=1)
-def load_skill_core() -> str:
-    """Load the allowed selection-coach documents once, with a safe fallback."""
-    configured_dir = str(os.getenv(SKILL_DIR_ENV) or "").strip()
-    skill_dir = Path(configured_dir).expanduser() if configured_dir else DEFAULT_SKILL_DIR
-
-    try:
-        documents = []
-        for index, relative_path in enumerate(SKILL_CORE_FILES, start=1):
-            path = skill_dir / relative_path
-            content = path.read_text(encoding="utf-8")
-            cleaned = _sanitize_skill_document(content)
-            if not cleaned:
-                raise ValueError(f"{relative_path.as_posix()} 内容为空")
-            documents.append(f"### 分析规则 {index}\n{cleaned}")
-        return "\n\n".join(documents)
-    except (OSError, UnicodeError, ValueError) as exc:
-        logger.warning("未能读取公考选岗 Skill，已启用最小兜底 Prompt：%s", exc)
-        return MINIMAL_SKILL_CORE_PROMPT
-
-
-def _sanitize_skill_document(content: str) -> str:
-    """Remove maintenance-only references without reading their target files."""
-    lines = str(content or "").replace("\ufeff", "").splitlines()
-    if lines and lines[0].strip() == "---":
-        try:
-            closing_index = next(
-                index for index, line in enumerate(lines[1:], start=1) if line.strip() == "---"
-            )
-            lines = lines[closing_index + 1 :]
-        except StopIteration:
-            pass
-    return "\n".join(
-        line
-        for line in lines
-        if not any(excluded in line for excluded in SKILL_EXCLUDED_REFERENCES)
-    ).strip()
+from app.schemas.product_schema import UserProfilePayload
+from app.services.analysis_skill_service import load_skill_core
 
 
 SYSTEM_ROLE_PROMPT = """
@@ -85,7 +17,7 @@ SYSTEM_ROLE_PROMPT = """
 3. 可以直接指出用户当前最大问题，但不能嘲讽、阴阳怪气或制造焦虑。
 4. 常用“你先别急着看分数，第一关是资格审查”“先放进备选，不要直接押宝”
    “历史分数能参考，但不能当今年答案”这类务实表达。
-5. 不模仿、不提及任何真实名人，也不自称名人风格。
+5. 保持工作台助手身份，不冒充真实人物；可以说明所用公开方法的来源，不编造本人观点。
 6. 清楚区分结构化事实、基于事实的判断和当前数据缺口。
 """.strip()
 
@@ -258,11 +190,62 @@ SCORE_RISK_PROMPT = """
 """.strip()
 
 
-def build_free_chat_system_prompt() -> str:
+def build_current_profile_context(payload: AgentAnalyzeRequest) -> dict:
+    """Send current decision constraints only, excluding arbitrary/private extras."""
+    raw = payload.profile.get("raw_profile_json")
+    stored = dict(raw) if isinstance(raw, dict) else {}
+    stored.update(payload.profile)
+    allowed = UserProfilePayload.model_fields.keys() - {"raw_profile_json", "filled_fields"}
+    profile = {key: value for key, value in stored.items() if key in allowed and value is not None}
+    # A temporary major/education change invalidates the saved catalog hierarchy.
+    previous_education = stored.get("education") or stored.get("education_level") or ""
+    if (str(stored.get("major") or "").strip() != payload.major.strip()
+            or str(previous_education).strip() != payload.education.strip()):
+        for key in ("major_code", "major_category", "major_discipline", "major_education"):
+            profile.pop(key, None)
+    # Temporary filters take precedence over the saved profile's basic fields.
+    profile.update(education=payload.education, education_level=payload.education,
+                   major=payload.major, identity=payload.identity)
+    return {
+        "目标类型": payload.target, "考试类型": payload.exam_type, "招考年度": payload.year,
+        "目标省份": payload.region, "目标城市": payload.city,
+        "当前画像资格与偏好": profile,
+    }
+
+
+def use_public_method(payload: AgentAnalyzeRequest) -> bool:
+    """Derive a bounded conversation preference from explicit user messages only."""
+    enabled = True
+    messages = [m.content for m in payload.messages[-12:] if m.role == "user"]
+    for content in [*messages, payload.question]:
+        # Recognize explicit requests, not quoted commands or a mention of exit costs.
+        text = str(content or "").strip().strip("。！! ")
+        text = re.sub(r"^(?:(?:请|麻烦|我想|我希望|帮我|先|暂时|现在|还是)\s*)+", "", text)
+        negative = re.match(
+            r"^(?:不要|别|不用|不使用|关闭|停止使用|退出)(?:再)?(?:用|使用)?"
+            r"(?:这个方法|这个视角|网友红领巾|红领巾|巾神模式)", text)
+        positive = re.match(
+            r"^(?:(?:重新|恢复|开始|再)?(?:用|使用|按)|开启|启用)"
+            r"(?:网友红领巾|红领巾|巾神模式)", text)
+        if text == "退出" or text.startswith("切回正常") or negative:
+            enabled = False
+        elif text == "巾神模式" or positive:
+            enabled = True
+    return enabled
+
+
+def _method_prompt(enabled: bool) -> str:
+    return load_skill_core() if enabled else (
+        "用户本对话已选择普通工作台顾问模式；不使用人物表达或公开方法模板。准确性规则仍然生效。"
+    )
+
+
+def build_free_chat_system_prompt(use_skill: bool = True) -> str:
     """Build the shared runtime prompt for direct answers and follow-up replies."""
     return "\n\n".join(
         [
             SYSTEM_ROLE_PROMPT,
+            _method_prompt(use_skill),
             SAFETY_AND_ACCURACY_RULES_PROMPT,
             UNSTRUCTURED_DATA_BOUNDARIES_PROMPT,
             OUTPUT_RULES_PROMPT,
@@ -272,6 +255,26 @@ def build_free_chat_system_prompt() -> str:
             ),
         ]
     )
+
+
+def build_job_card_system_prompt(use_skill: bool = True) -> str:
+    """Apply methodology to card explanations while retaining the JSON contract."""
+    return "\n\n".join([
+        SYSTEM_ROLE_PROMPT, _method_prompt(use_skill), SAFETY_AND_ACCURACY_RULES_PROMPT,
+        "只返回任务要求字段的一个有效 JSON 对象，不要 Markdown。不要生成完整岗位报告。",
+    ])
+
+
+def build_job_analysis_system_prompt(use_skill: bool = True) -> str:
+    """Keep public methodology in the model system role, above task data."""
+    return "\n\n".join([
+        SYSTEM_ROLE_PROMPT,
+        _method_prompt(use_skill),
+        SAFETY_AND_ACCURACY_RULES_PROMPT,
+        OUTPUT_RULES_PROMPT,
+        JOB_ANALYSIS_PAGE_CONTRACT_PROMPT,
+        JOB_ANALYSIS_RUNTIME_SAFETY_PROMPT,
+    ])
 
 
 def build_intent_router_prompt(
@@ -370,7 +373,7 @@ def build_job_analysis_prompt(
     sources: list[dict],
     policy_answer: str = "",
 ) -> str:
-    """Combine cached skill guidance with request-specific runtime context."""
+    """Build task data; methodology is supplied separately in the system role."""
     del rule_summary, recommended_directions, score_references
     job_facts = [_build_job_fact(job) for job in matched_jobs if not job.get("data_error")]
     structured_count = len(job_facts)
@@ -388,6 +391,7 @@ def build_job_analysis_prompt(
             "专业": payload.major,
             "身份": payload.identity,
         },
+        "当前画像约束": build_current_profile_context(payload),
         "用户尚未明确的信息": _profile_missing_fields(payload),
         "岗位数据": job_facts,
         "已知风险提醒": [str(item) for item in risks if str(item).strip()],
@@ -407,9 +411,6 @@ def build_job_analysis_prompt(
         ],
     }
     return f"""
-【分析规则】
-{load_skill_core()}
-
 【本次任务与数据】
 实际返回 {structured_count} 个岗位，必须严格分析这 {structured_count} 个，不得增加、减少或重排。
 调用方给出的数量为 {recommendation_count}；如两者不一致，以实际岗位数组长度 {structured_count} 为准。

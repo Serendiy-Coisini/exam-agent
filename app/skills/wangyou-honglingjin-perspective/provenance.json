@@ -1,0 +1,23 @@
+{
+  "repository": "https://github.com/tyf152119-web/wangyou-honglingjin-perspective",
+  "revision": "9410041d593d291687861fbfd52257ae9914356e",
+  "upstream_path": "skills/wangyou-honglingjin-perspective",
+  "license": "MIT",
+  "integration": "Unmodified Markdown documents only; runtime reads allowlisted SKILL.md sections. No upstream scripts are shipped or executed.",
+  "files": {
+    "LICENSE": "19590636ed11cd398598b0f677c984799e46f5e278f61e38003c3a6bc24ce147",
+    "NOTICE.md": "1a8519854eb40d815795574d5c0976f008aa4e15c49f66d51711864575e2ed38",
+    "references/research/01-writings.md": "205329778a7c6b7da923ce6e36ba0152200c71f2b112403256740018827e3461",
+    "references/research/02-conversations.md": "8f0d4cdc7c0cbd052b1e067e9adfffde8e67312fbf5a1f720e543c05b977c01e",
+    "references/research/03-expression-dna.md": "b338dbbed7f107b9a55a52aa04822adbcd241b9bfd17867a5df542b185b930ab",
+    "references/research/04-external-views.md": "8949b330b9de605061e4ada2a8ad4d50b105f1ad13300c5b3a52c89e0ab7e8eb",
+    "references/research/05-decisions.md": "1364ea83dee98a3ab5575e462a3566a85f6709742cd2ae49fc72e314a729736a",
+    "references/research/06-timeline.md": "1fef8ef2294da2289e24429228477a1461102bd1c953450150177d253607df94",
+    "references/research/07-synthesis.md": "b1b13feeceb5ca054d274f9421235a99981cef26e3a75272ba40286aac108de4",
+    "references/research/08-p0-asr-findings.md": "daf6cef11a9ae2ae2a93f70ab18939e7ffcf61734b57b6ad9f34495fb8da04b8",
+    "references/research/09-representative-mock-asr-findings.md": "09ebca774f0740a31c4f236196022bea284edfa7a472e608c6ad3a59a31442fc",
+    "references/research/10-missing-subtitle-coverage.md": "f33f7461f135ff9d8db8d727b145ced165475120fc096889181d11261124d261",
+    "references/SOURCE_DATA.md": "c48d49059ae0104190cf8974d4b9ef7ed6af342c98be264abf4efe46d0a06639",
+    "SKILL.md": "899d476d5fbbeb9e25d3974f87f1f0024c11014e6d4ec42e8dcfdba606ffb479"
+  }
+}

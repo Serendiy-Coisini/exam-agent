@@ -15,12 +15,13 @@ def inference_budget(seconds):
         _ANALYSIS_DEADLINE.reset(token)
 
 
+from app.agents.prompt_builder import build_job_analysis_system_prompt
 from app.core.config import settings
 from app.services.model_provider_options import model_request_options
 from app.services.model_settings_service import get_model_configuration
 
 
-def generate_llm_json(prompt: str, fallback_data: dict) -> dict:
+def generate_llm_json(prompt: str, fallback_data: dict, analysis_system_prompt: str = "") -> dict:
     """Ask the configured chat model for one JSON object."""
     config = get_model_configuration()
     fallback = dict(fallback_data or {})
@@ -48,6 +49,7 @@ def generate_llm_json(prompt: str, fallback_data: dict) -> dict:
                     "content": (
                         "You are the planning brain for a Chinese civil-service exam advisor. "
                         "Return exactly one valid JSON object. Do not use markdown."
+                        + ("\n\n" + analysis_system_prompt if analysis_system_prompt else "")
                     ),
                 },
                 {"role": "user", "content": prompt},
@@ -138,14 +140,10 @@ def generate_llm_chat(
     }
 
 
-def generate_llm_summary(prompt: str, fallback_report: str) -> dict:
+def generate_llm_summary(prompt: str, fallback_report: str, use_skill: bool = True) -> dict:
     """Generate the tool-grounded recommendation report used by existing flows."""
     return generate_llm_chat(
-        system_prompt=(
-            "You are a careful Chinese exam-position advisor. Only use the provided "
-            "tool results to discuss job recommendations, risk, scores, and checks. "
-            "Do not invent jobs, score lines, competition data, notices, or policy sources."
-        ),
+        system_prompt=build_job_analysis_system_prompt(use_skill=use_skill),
         messages=[{"role": "user", "content": prompt}],
         fallback_report=fallback_report,
         temperature=0.2,
